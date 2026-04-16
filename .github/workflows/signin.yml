@@ -1,0 +1,21 @@
+name: Top Heroes Daily Sign-in
+
+on:
+  schedule:
+    - cron: '1 2 * * *'  # 每天 東八區 10：01
+  workflow_dispatch:       # 允許手動觸發
+
+jobs:
+  sign-in:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run sign-in
+        run: node topheroes_signin.mjs
