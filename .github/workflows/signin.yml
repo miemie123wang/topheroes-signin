@@ -17,6 +17,12 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Random delay
+        run: |
+          delay=$((RANDOM % 1800))
+          echo "等待 $delay 秒..."
+          sleep $delay
+
       - name: Run sign-in
         run: node topheroes_signin.mjs
 
