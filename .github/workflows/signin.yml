@@ -2,8 +2,8 @@ name: Top Heroes Daily Sign-in
 
 on:
   schedule:
-    - cron: '1 2 * * *'  # 每天 東八區 10：01
-  workflow_dispatch:       # 允許手動觸發
+    - cron: '1 2 * * *'  # 東八區 10:01
+  workflow_dispatch:
 
 jobs:
   sign-in:
@@ -19,3 +19,12 @@ jobs:
 
       - name: Run sign-in
         run: node topheroes_signin.mjs
+
+      - name: Keep alive
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          echo $(date) >> keepalive.txt
+          git add keepalive.txt
+          git commit -m "keepalive"
+          git push
