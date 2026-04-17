@@ -32,7 +32,7 @@ async function signIn(uid) {
     })
   });
   console.log("Step 1: reporting ✓");
-  await sleep(2000 + Math.random() * 3000);
+  await sleep(2000);
 
   // Step 2: login and get token
   const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
@@ -56,7 +56,7 @@ async function signIn(uid) {
     return;
   }
   console.log(`Step 2: 登錄成功 ✓ (${loginData.data.user.nickname})`);
-  await sleep(2000 + Math.random() * 3000);
+  await sleep(2000);
 
   const authedHeaders = { ...headers, authorization: token };
 
@@ -80,10 +80,12 @@ async function signIn(uid) {
     return;
   }
   console.log(`Step 3: 找到簽到項目 ✓ (day_no: ${today.day_no})`);
-  await sleep(2000 + Math.random() * 3000);
+  await sleep(2000);
 
-  // Step 4: sign in
-  const todayDate = new Date().toISOString().split("T")[0];
+  // Step 4: sign in - use UTC+8 date
+  const now = new Date();
+  const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const todayDate = utc8.toISOString().split("T")[0];
   const receiveRes = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
     method: "POST",
     headers: authedHeaders,
@@ -112,6 +114,6 @@ const uids = readFileSync("uids.txt", "utf-8")
 console.log(`找到 ${uids.length} 個帳號`);
 for (const uid of uids) {
   await signIn(uid);
-  await sleep(5000 + Math.random() * 10000);  // 每個帳號之間等 5-15 秒
+  await sleep(5000);  // 每個帳號之間等 5 秒
 }
 console.log("\n全部完成！");
