@@ -82,18 +82,14 @@ async function signIn(uid) {
   console.log(`Step 3: 找到簽到項目 ✓ (day_no: ${today.day_no})`);
   await sleep(2000);
 
-  // Step 4: sign in - use UTC+8 date
-  const now = new Date();
-  const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const todayDate = utc8.toISOString().split("T")[0];
+  // Step 4: sign in
   const receiveRes = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
     method: "POST",
     headers: authedHeaders,
     body: JSON.stringify({
       activity_id: ACTIVITY_ID,
-      sign_in_type: 2,
+      sign_in_type: 1,
       site_id: SITE_ID,
-      appending_date: todayDate,
       day_no: today.day_no
     })
   });
