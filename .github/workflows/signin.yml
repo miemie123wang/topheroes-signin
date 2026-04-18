@@ -1,12 +1,14 @@
 name: Top Heroes Daily Sign-in
 on:
   schedule:
-    - cron: '1 2 * * *'  # 東八區 10:01
+    - cron: '0 2 * * *'  # 東八區 10:00 整點觸發
   workflow_dispatch:
 jobs:
   sign-in:
     runs-on: ubuntu-latest
     steps:
+      - name: Random delay
+        run: sleep $((RANDOM % 300))  # 隨機延遲 0~299 秒（5分鐘內）
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Node.js
