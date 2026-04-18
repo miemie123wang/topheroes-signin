@@ -1,7 +1,5 @@
 name: Top Heroes Daily Sign-in
 on:
-  schedule:
-    - cron: '0 2 * * *'  # 東八區 10:00 整點觸發
   workflow_dispatch:
 jobs:
   sign-in:
