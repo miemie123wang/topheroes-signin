@@ -71,4 +71,23 @@ console.log(`網頁上共 ${allCodes.length} 個 code，其中 ${newCodes.length
 
 if (newCodes.length === 0) {
   console.log("沒有新 code，結束");
-  proces
+  process.exit(0);
+}
+
+for (const code of newCodes) {
+  console.log(`\n開始兌換: ${code}`);
+  for (let i = 0; i < uids.length; i++) {
+    if (i > 0) await sleep(15000 + Math.random() * 10000);
+    const uid = uids[i];
+    const token = await loginUid(uid);
+    if (!token) {
+      console.log(`  ✗ UID ${uid} 登錄失敗`);
+      continue;
+    }
+    await redeemForUid(uid, code, token);
+  }
+  redeemed.add(code);
+  writeFileSync(REDEEMED_FILE, [...redeemed].join("\n") + "\n");
+}
+
+console.log("\n全部完成！");
