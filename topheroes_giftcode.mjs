@@ -77,7 +77,7 @@ if (newCodes.length === 0) {
 for (const code of newCodes) {
   console.log(`\n開始兌換: ${code}`);
   for (let i = 0; i < uids.length; i++) {
-    if (i > 0) await sleep(8000 + Math.random() * 4000);
+    if (i > 0) await sleep(3000 + Math.random() * 3000);
     const uid = uids[i];
     const token = await loginUid(uid);
     if (!token) {
