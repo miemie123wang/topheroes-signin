@@ -15,23 +15,9 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 async function fetchCodes() {
   const res = await fetch("https://topheroes.info/gift-codes.php");
   const html = await res.text();
-  // 从页面里提取 code，根据实际 HTML 结构调整
-  const matches = [...html.matchAll(/[A-Z0-9]{6,20}/g)];
-  return [...new Set(matches.map(m => m[0]))];
-}
-
-async function redeemForUid(uid, code, token) {
-  const redeemRes = await fetch(`${BASE}/api/v2/store/redemption/redeem`, {
-    method: "POST",
-    headers: { ...headers, authorization: token },
-    body: JSON.stringify({ project_id: PROJECT_ID, redemption_code: code })
-  });
-  const data = await redeemRes.json();
-  if (data.code === 1) {
-    console.log(`  ✓ UID ${uid} 兌換成功`);
-  } else {
-    console.log(`  ✗ UID ${uid} 失敗: ${data.message}`);
-  }
+  const webSection = html.match(/<section id="web-codes"[\s\S]*?<\/section>/)?.[0] ?? "";
+  const matches = [...webSection.matchAll(/copyToClipboard\(this,\s*'([^']+)'\)/g)];
+  return [...new Set(matches.map(m => m[1]))];
 }
 
 async function loginUid(uid) {
@@ -52,6 +38,20 @@ async function loginUid(uid) {
   const loginData = await loginRes.json();
   if (loginData.code !== 1) return null;
   return loginRes.headers.get("authorization");
+}
+
+async function redeemForUid(uid, code, token) {
+  const redeemRes = await fetch(`${BASE}/api/v2/store/redemption/redeem`, {
+    method: "POST",
+    headers: { ...headers, authorization: token },
+    body: JSON.stringify({ project_id: PROJECT_ID, redemption_code: code })
+  });
+  const data = await redeemRes.json();
+  if (data.code === 1) {
+    console.log(`  ✓ UID ${uid} 兌換成功`);
+  } else {
+    console.log(`  ✗ UID ${uid} 失敗: ${data.message}`);
+  }
 }
 
 // 读已兑换记录
@@ -78,17 +78,18 @@ if (newCodes.length === 0) {
   process.exit(0);
 }
 
-// 逐个 code，逐个 uid 兑换
 for (const code of newCodes) {
   console.log(`\n開始兌換: ${code}`);
   for (const uid of uids) {
     const token = await loginUid(uid);
-    if (!token) { console.log(`  ✗ UID ${uid} 登錄失敗`); continue; }
+    if (!token) {
+      console.log(`  ✗ UID ${uid} 登錄失敗`);
+      continue;
+    }
     await redeemForUid(uid, code, token);
     await sleep(3000 + Math.random() * 3000);
   }
   redeemed.add(code);
-  // 每兑换完一个 code 就立即写入，防止中途失败丢失记录
   writeFileSync(REDEEMED_FILE, [...redeemed].join("\n") + "\n");
 }
 
