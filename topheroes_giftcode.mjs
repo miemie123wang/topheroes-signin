@@ -30,7 +30,6 @@ async function loginUid(uid) {
     })
   });
   await sleep(1000);
-
   const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
     method: "POST", headers,
     body: JSON.stringify({ site_id: SITE_ID, player_id: uid, server_id: "", device: "mobile" })
@@ -54,7 +53,6 @@ async function redeemForUid(uid, code, token) {
   }
 }
 
-// 读已兑换记录
 const REDEEMED_FILE = "redeemed_codes.txt";
 const redeemed = new Set(
   existsSync(REDEEMED_FILE)
@@ -62,35 +60,15 @@ const redeemed = new Set(
     : []
 );
 
-// 读 UIDs
 const uids = readFileSync("uids.txt", "utf-8")
   .split("\n").map(l => l.trim()).filter(Boolean);
 
 console.log(`找到 ${uids.length} 個帳號`);
 
-// 抓新 code
 const allCodes = await fetchCodes();
 const newCodes = allCodes.filter(c => !redeemed.has(c));
 console.log(`網頁上共 ${allCodes.length} 個 code，其中 ${newCodes.length} 個未兌換`);
 
 if (newCodes.length === 0) {
   console.log("沒有新 code，結束");
-  process.exit(0);
-}
-
-for (const code of newCodes) {
-  console.log(`\n開始兌換: ${code}`);
-  for (const uid of uids) {
-    const token = await loginUid(uid);
-    if (!token) {
-      console.log(`  ✗ UID ${uid} 登錄失敗`);
-      continue;
-    }
-    await redeemForUid(uid, code, token);
-    await sleep(3000 + Math.random() * 3000);
-  }
-  redeemed.add(code);
-  writeFileSync(REDEEMED_FILE, [...redeemed].join("\n") + "\n");
-}
-
-console.log("\n全部完成！");
+  proces
