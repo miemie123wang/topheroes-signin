@@ -17,7 +17,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 async function getCode() {
   // Try environment variable first (GitHub Actions)
   if (process.env.REDEEM_CODE) {
-    return process.env.REDEEM_CODE.trim().toUpperCase();
+    return process.env.REDEEM_CODE.trim();
   }
   // Otherwise prompt
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
