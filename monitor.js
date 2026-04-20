@@ -250,6 +250,7 @@ async function main() {
     console.log(`已發送通知: ${code}`);
   }
 
+  await sendNotification("测试通知，webhook 正常工作 ✓");
   if (!codes.length && !inGameCodes.length) console.log("沒有新 code");
 }
 
