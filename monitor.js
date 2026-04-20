@@ -5,7 +5,10 @@ const SITE_ID = 1028526;
 const PROJECT_ID = 1028637;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CHANNEL_ID = "1343771733173473311";
+const CHANNEL_IDS = [
+  "1343771733173473311",
+  "1112595962515427338"
+];
 const LAST_MSG_FILE = "last_message_id.txt";
 
 const gameHeaders = {
@@ -24,52 +27,67 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function loadLastMessageId() {
   if (existsSync(LAST_MSG_FILE)) {
-    return readFileSync(LAST_MSG_FILE, "utf-8").trim();
+    try {
+      return JSON.parse(readFileSync(LAST_MSG_FILE, "utf-8"));
+    } catch {
+      return {};
+    }
   }
-  return null;
+  return {};
 }
 
-function saveLastMessageId(id) {
-  writeFileSync(LAST_MSG_FILE, id);
+function saveLastMessageId(ids) {
+  writeFileSync(LAST_MSG_FILE, JSON.stringify(ids));
 }
 
 function extractGiftCode(content) {
   const match = content.match(/`([A-Z0-9]{6,20})`/i);
-  if (match && content.toLowerCase().includes("giftcode") && content.toLowerCase().includes("purchase center")) {
+  if (
+    match &&
+    content.toLowerCase().includes("giftcode") &&
+    content.toLowerCase().includes("purchase center")
+  ) {
     return match[1].toUpperCase();
   }
   return null;
 }
 
-async function checkDiscordChannel(lastMessageId) {
-  const params = new URLSearchParams({ limit: "10" });
-  if (lastMessageId) params.append("after", lastMessageId);
+async function checkDiscordChannel(lastMessageIds) {
+  const allCodes = [];
+  const newLastIds = { ...lastMessageIds };
 
-  const res = await fetch(
-    `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?${params}`,
-    { headers: discordHeaders }
-  );
+  for (const channelId of CHANNEL_IDS) {
+    const lastId = lastMessageIds[channelId];
+    const params = new URLSearchParams({ limit: "10" });
+    if (lastId) params.append("after", lastId);
 
-  if (!res.ok) {
-    console.error(`Discord API 錯誤: ${res.status} ${await res.text()}`);
-    return { newLastId: lastMessageId, codes: [] };
-  }
+    const res = await fetch(
+      `https://discord.com/api/v10/channels/${channelId}/messages?${params}`,
+      { headers: discordHeaders }
+    );
 
-  const messages = await res.json();
-  if (!messages.length) return { newLastId: lastMessageId, codes: [] };
-
-  messages.sort((a, b) => (BigInt(a.id) > BigInt(b.id) ? 1 : -1));
-
-  const codes = [];
-  for (const msg of messages) {
-    const code = extractGiftCode(msg.content);
-    if (code) {
-      console.log(`發現新 code: ${code}`);
-      codes.push(code);
+    if (!res.ok) {
+      console.error(`頻道 ${channelId} 錯誤: ${res.status}`);
+      continue;
     }
+
+    const messages = await res.json();
+    if (!messages.length) continue;
+
+    messages.sort((a, b) => (BigInt(a.id) > BigInt(b.id) ? 1 : -1));
+
+    for (const msg of messages) {
+      const code = extractGiftCode(msg.content);
+      if (code && !allCodes.includes(code)) {
+        console.log(`頻道 ${channelId} 發現新 code: ${code}`);
+        allCodes.push(code);
+      }
+    }
+
+    newLastIds[channelId] = messages[messages.length - 1].id;
   }
 
-  return { newLastId: messages[messages.length - 1].id, codes };
+  return { newLastIds, codes: allCodes };
 }
 
 async function redeemForUid(uid, code) {
@@ -155,35 +173,48 @@ async function main() {
     .split("\n").map(l => l.trim()).filter(l => l.length > 0);
   console.log(`找到 ${uids.length} 個帳號`);
 
-  let lastMessageId = loadLastMessageId();
+  let lastMessageIds = loadLastMessageId();
 
-  if (!lastMessageId) {
-    const res = await fetch(
-      `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=1`,
-      { headers: discordHeaders }
-    );
-    const messages = await res.json();
-    if (messages.length) {
-      lastMessageId = messages[0].id;
-      saveLastMessageId(lastMessageId);
-      console.log("初始化完成，從現在開始監聽新消息");
+  // 首次運行初始化
+  if (Object.keys(lastMessageIds).length === 0) {
+    for (const channelId of CHANNEL_IDS) {
+      const res = await fetch(
+        `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
+        { headers: discordHeaders }
+      );
+      const messages = await res.json();
+      if (messages.length) {
+        lastMessageIds[channelId] = messages[0].id;
+      }
     }
+    saveLastMessageId(lastMessageIds);
+    console.log("初始化完成，從現在開始監聽新消息");
     return;
   }
 
-  const { newLastId, codes } = await checkDiscordChannel(lastMessageId);
-
-  if (newLastId !== lastMessageId) {
-    saveLastMessageId(newLastId);
+  // 新增頻道時補充初始化
+  for (const channelId of CHANNEL_IDS) {
+    if (!lastMessageIds[channelId]) {
+      const res = await fetch(
+        `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
+        { headers: discordHeaders }
+      );
+      const messages = await res.json();
+      if (messages.length) {
+        lastMessageIds[channelId] = messages[0].id;
+        console.log(`新頻道 ${channelId} 初始化完成`);
+      }
+    }
   }
+
+  const { newLastIds, codes } = await checkDiscordChannel(lastMessageIds);
+  saveLastMessageId(newLastIds);
 
   for (const code of codes) {
     await redeemAllUids(code);
   }
 
-  if (!codes.length) {
-    console.log("沒有新 code");
-  }
+  if (!codes.length) console.log("沒有新 code");
 }
 
 main();
