@@ -5,12 +5,12 @@ const SITE_ID = 1028526;
 const PROJECT_ID = 1028637;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
 const CHANNEL_IDS = [
   "1343771733173473311",
   "1112595962515427338"
 ];
 const LAST_MSG_FILE = "last_message_id.txt";
-const DM_USER_ID = "1033820891290812496";
 
 const gameHeaders = {
   "Content-Type": "application/json",
@@ -46,7 +46,6 @@ function saveLastMessageId(ids) {
   writeFileSync(LAST_MSG_FILE, JSON.stringify(ids));
 }
 
-// 网页兑换码：有 giftcode + purchase center
 function extractGiftCode(content) {
   const match = content.match(/`([A-Za-z0-9]{6,20})`/);
   if (
@@ -59,41 +58,31 @@ function extractGiftCode(content) {
   return null;
 }
 
-// 游戏内兑换码：有 giftcode 但没有 purchase center
 function extractInGameCode(content) {
   if (!content.toLowerCase().includes("giftcode")) return null;
   if (content.toLowerCase().includes("purchase center")) return null;
 
-  // 先尝试反引号格式 `CODE`
   const backtickMatch = content.match(/`([A-Za-z0-9]{6,20})`/);
   if (backtickMatch) return backtickMatch[1];
 
-  // 再尝试 "GiftCode: CODE" 或 "GiftCode:\nCODE" 格式
   const labelMatch = content.match(/giftcode[:\s,，\n]+([A-Za-z0-9]{6,20})/i);
   if (labelMatch) return labelMatch[1];
 
   return null;
 }
 
-async function sendDiscordDM(content) {
-  const dmRes = await fetch("https://discord.com/api/v10/users/@me/channels", {
-    method: "POST",
-    headers: discordHeaders,
-    body: JSON.stringify({ recipient_id: DM_USER_ID })
-  });
-  const dmChannel = await dmRes.json();
-  if (!dmChannel.id) {
-    console.error("無法建立 DM 頻道:", dmChannel);
+async function sendNotification(content) {
+  if (!DISCORD_WEBHOOK) {
+    console.error("缺少 DISCORD_WEBHOOK 環境變量");
     return;
   }
-
-  const msgRes = await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+  const res = await fetch(DISCORD_WEBHOOK, {
     method: "POST",
-    headers: discordHeaders,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content })
   });
-  if (!msgRes.ok) {
-    console.error("DM 發送失敗:", await msgRes.text());
+  if (!res.ok) {
+    console.error("Webhook 發送失敗:", await res.text());
   }
 }
 
@@ -227,7 +216,6 @@ async function main() {
 
   let lastMessageIds = loadLastMessageId();
 
-  // 首次運行或新增頻道時初始化
   let needsSave = false;
   for (const channelId of CHANNEL_IDS) {
     if (!lastMessageIds[channelId]) {
@@ -258,13 +246,11 @@ async function main() {
   }
 
   for (const code of inGameCodes) {
-    await sendDiscordDM(`🎮 發現遊戲內兌換碼：\`${code}\`\n請手動在遊戲內兌換！`);
-    console.log(`已發送 DM 通知: ${code}`);
+    await sendNotification(`🎮 發現遊戲內兌換碼：\`${code}\`\n請手動在遊戲內兌換！`);
+    console.log(`已發送通知: ${code}`);
   }
 
   if (!codes.length && !inGameCodes.length) console.log("沒有新 code");
 }
 
 main();
-
-await sendDiscordDM("测试通知，如果收到说明DM功能正常");
