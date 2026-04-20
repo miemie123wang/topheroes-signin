@@ -46,13 +46,13 @@ function saveLastMessageId(ids) {
 }
 
 function extractGiftCode(content) {
-  const match = content.match(/`([A-Z0-9]{6,20})`/i);
+  const match = content.match(/`([A-Za-z0-9]{6,20})`/);
   if (
     match &&
     content.toLowerCase().includes("giftcode") &&
     content.toLowerCase().includes("purchase center")
   ) {
-    return match[1].toUpperCase();
+    return match[1]; // 保留原始大小写
   }
   return null;
 }
