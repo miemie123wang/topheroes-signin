@@ -35,7 +35,7 @@ function saveLastMessageId(id) {
 
 function extractGiftCode(content) {
   const match = content.match(/`([A-Z0-9]{6,20})`/i);
-  if (match && content.toLowerCase().includes("giftcode")) {
+  if (match && content.toLowerCase().includes("giftcode") && content.toLowerCase().includes("purchase center")) {
     return match[1].toUpperCase();
   }
   return null;
