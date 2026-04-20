@@ -1,8 +1,8 @@
 name: Check Gift Codes
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  repository_dispatch:
+    types: [cron-trigger]
   workflow_dispatch:
 
 jobs:
