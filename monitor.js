@@ -5,7 +5,7 @@ const SITE_ID = 1028526;
 const PROJECT_ID = 1028637;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CHANNEL_ID = "1098493491216121916";
+const CHANNEL_ID = "1343771733173473311";
 const LAST_MSG_FILE = "last_message_id.txt";
 
 const gameHeaders = {
@@ -157,7 +157,6 @@ async function main() {
 
   let lastMessageId = loadLastMessageId();
 
-  // 首次运行：只记录当前最新消息ID，不兑换历史code
   if (!lastMessageId) {
     const res = await fetch(
       `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=1`,
