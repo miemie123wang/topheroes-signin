@@ -25,17 +25,6 @@ const discordHeaders = {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function loadLastMessageId() {
-  if (existsSync(LAST_MSG_FILE)) {
-    try {
-      return JSON.parse(readFileSync(LAST_MSG_FILE, "utf-8"));
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
 function saveLastMessageId(ids) {
   writeFileSync(LAST_MSG_FILE, JSON.stringify(ids));
 }
