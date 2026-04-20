@@ -25,6 +25,7 @@ jobs:
       - name: Check and redeem
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: node monitor.js
 
       - name: Save last message ID
