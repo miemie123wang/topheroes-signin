@@ -214,3 +214,4 @@ async function main() {
 }
 
 main();
+await sendDiscordDM("🎮 測試通知：遊戲內兌換碼 `TESTCODE123`\n請手動在遊戲內兌換！");
