@@ -2,8 +2,8 @@ name: Check Gift Codes
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # 每5分钟
-  workflow_dispatch:         # 允许手动触发
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   check:
