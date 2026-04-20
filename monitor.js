@@ -25,6 +25,22 @@ const discordHeaders = {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function loadLastMessageId() {
+  if (existsSync(LAST_MSG_FILE)) {
+    try {
+      const content = readFileSync(LAST_MSG_FILE, "utf-8").trim();
+      const parsed = JSON.parse(content);
+      if (typeof parsed !== "object" || parsed === null) {
+        return {};
+      }
+      return parsed;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 function saveLastMessageId(ids) {
   writeFileSync(LAST_MSG_FILE, JSON.stringify(ids));
 }
@@ -164,24 +180,8 @@ async function main() {
 
   let lastMessageIds = loadLastMessageId();
 
-  // 首次運行初始化
-  if (Object.keys(lastMessageIds).length === 0) {
-    for (const channelId of CHANNEL_IDS) {
-      const res = await fetch(
-        `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
-        { headers: discordHeaders }
-      );
-      const messages = await res.json();
-      if (messages.length) {
-        lastMessageIds[channelId] = messages[0].id;
-      }
-    }
-    saveLastMessageId(lastMessageIds);
-    console.log("初始化完成，從現在開始監聽新消息");
-    return;
-  }
-
-  // 新增頻道時補充初始化
+  // 首次運行或新增頻道時初始化
+  let needsSave = false;
   for (const channelId of CHANNEL_IDS) {
     if (!lastMessageIds[channelId]) {
       const res = await fetch(
@@ -191,9 +191,16 @@ async function main() {
       const messages = await res.json();
       if (messages.length) {
         lastMessageIds[channelId] = messages[0].id;
-        console.log(`新頻道 ${channelId} 初始化完成`);
+        console.log(`頻道 ${channelId} 初始化完成`);
+        needsSave = true;
       }
     }
+  }
+
+  if (needsSave) {
+    saveLastMessageId(lastMessageIds);
+    console.log("初始化完成，下次運行開始監聽新消息");
+    return;
   }
 
   const { newLastIds, codes } = await checkDiscordChannel(lastMessageIds);
