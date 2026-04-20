@@ -46,7 +46,7 @@ function saveLastMessageId(ids) {
 }
 
 function extractGiftCode(content) {
-  const match = content.match(/`([A-Za-z0-9]{6,20})`/);
+  const match = content.match(/([A-Za-z0-9]{6,20})/);
   if (
     match &&
     content.toLowerCase().includes("giftcode") &&
@@ -67,12 +67,12 @@ async function checkDiscordChannel(lastMessageIds) {
     if (lastId) params.append("after", lastId);
 
     const res = await fetch(
-      `https://discord.com/api/v10/channels/${channelId}/messages?${params}`,
+      https://discord.com/api/v10/channels/${channelId}/messages?${params},
       { headers: discordHeaders }
     );
 
     if (!res.ok) {
-      console.error(`頻道 ${channelId} 錯誤: ${res.status}`);
+      console.error(頻道 ${channelId} 錯誤: ${res.status});
       continue;
     }
 
@@ -84,7 +84,7 @@ async function checkDiscordChannel(lastMessageIds) {
     for (const msg of messages) {
       const code = extractGiftCode(msg.content);
       if (code && !allCodes.includes(code)) {
-        console.log(`頻道 ${channelId} 發現新 code: ${code}`);
+        console.log(頻道 ${channelId} 發現新 code: ${code});
         allCodes.push(code);
       }
     }
@@ -96,9 +96,9 @@ async function checkDiscordChannel(lastMessageIds) {
 }
 
 async function redeemForUid(uid, code) {
-  console.log(`  UID: ${uid}`);
+  console.log(  UID: ${uid});
 
-  await fetch(`${BASE}/api/v2/store/point/reporting`, {
+  await fetch(${BASE}/api/v2/store/point/reporting, {
     method: "POST",
     headers: gameHeaders,
     body: JSON.stringify({
@@ -113,7 +113,7 @@ async function redeemForUid(uid, code) {
   });
   await sleep(1000);
 
-  const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
+  const loginRes = await fetch(${BASE}/api/v2/store/login/player, {
     method: "POST",
     headers: gameHeaders,
     body: JSON.stringify({
@@ -125,7 +125,7 @@ async function redeemForUid(uid, code) {
   });
   const loginData = await loginRes.json();
   if (loginData.code !== 1) {
-    console.error(`  登錄失敗: ${loginData.message}`);
+    console.error(  登錄失敗: ${loginData.message});
     return;
   }
   const token = loginRes.headers.get("authorization");
@@ -133,10 +133,10 @@ async function redeemForUid(uid, code) {
     console.error("  沒有拿到 token");
     return;
   }
-  console.log(`  登錄成功 ✓ (${loginData.data.user.nickname})`);
+  console.log(  登錄成功 ✓ (${loginData.data.user.nickname}));
   await sleep(1000);
 
-  const redeemRes = await fetch(`${BASE}/api/v2/store/redemption/redeem`, {
+  const redeemRes = await fetch(${BASE}/api/v2/store/redemption/redeem, {
     method: "POST",
     headers: { ...gameHeaders, authorization: token },
     body: JSON.stringify({
@@ -146,9 +146,9 @@ async function redeemForUid(uid, code) {
   });
   const redeemData = await redeemRes.json();
   if (redeemData.code === 1) {
-    console.log(`  兌換成功 ✓`);
+    console.log(  兌換成功 ✓);
   } else {
-    console.error(`  兌換失敗: ${redeemData.message}`);
+    console.error(  兌換失敗: ${redeemData.message});
   }
 }
 
@@ -158,7 +158,7 @@ async function redeemAllUids(code) {
     .map(l => l.trim())
     .filter(l => l.length > 0);
 
-  console.log(`開始為 ${uids.length} 個帳號兌換: ${code}`);
+  console.log(開始為 ${uids.length} 個帳號兌換: ${code});
   for (const uid of uids) {
     await redeemForUid(uid, code);
     await sleep(3000 + Math.random() * 3000);
@@ -176,7 +176,7 @@ async function main() {
 
   const uids = readFileSync("uids.txt", "utf-8")
     .split("\n").map(l => l.trim()).filter(l => l.length > 0);
-  console.log(`找到 ${uids.length} 個帳號`);
+  console.log(找到 ${uids.length} 個帳號);
 
   let lastMessageIds = loadLastMessageId();
 
@@ -185,13 +185,13 @@ async function main() {
   for (const channelId of CHANNEL_IDS) {
     if (!lastMessageIds[channelId]) {
       const res = await fetch(
-        `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
+        https://discord.com/api/v10/channels/${channelId}/messages?limit=1,
         { headers: discordHeaders }
       );
       const messages = await res.json();
       if (messages.length) {
         lastMessageIds[channelId] = messages[0].id;
-        console.log(`頻道 ${channelId} 初始化完成`);
+        console.log(頻道 ${channelId} 初始化完成);
         needsSave = true;
       }
     }
