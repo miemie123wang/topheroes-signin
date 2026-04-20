@@ -266,3 +266,5 @@ async function main() {
 }
 
 main();
+
+await sendDiscordDM("测试通知，如果收到说明DM功能正常");
