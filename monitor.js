@@ -199,7 +199,10 @@ async function redeemAllUids(code) {
     await redeemForUid(uid, code);
     await sleep(3000 + Math.random() * 3000);
   }
+  
   console.log("全部兌換完成 ✓");
+  const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
+  await sendNotification(`✅ 網頁碼兌換成功！\n碼：\`${code}\`\n時間：${time}`);
 }
 
 async function main() {
