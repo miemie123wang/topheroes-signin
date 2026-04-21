@@ -1,9 +1,10 @@
-import { readFileSync } from "fs";
-
 const BASE = "https://topheroes.store.kopglobal.com";
 const ACTIVITY_ID = 2569;
 const SITE_ID = 1028526;
 const PROJECT_ID = 1028637;
+
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
+const APPS_SCRIPT_KEY = process.env.APPS_SCRIPT_KEY;
 
 const headers = {
   "Content-Type": "application/json",
@@ -14,8 +15,29 @@ const headers = {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function maskUid(uid) {
+  if (uid.length <= 4) return "****";
+  return uid.slice(0, 2) + "*".repeat(uid.length - 4) + uid.slice(-2);
+}
+
+async function fetchApprovedUids() {
+  if (!APPS_SCRIPT_URL || !APPS_SCRIPT_KEY) {
+    throw new Error("缺少 APPS_SCRIPT_URL 或 APPS_SCRIPT_KEY 環境變量");
+  }
+  const url = `${APPS_SCRIPT_URL}?key=${encodeURIComponent(APPS_SCRIPT_KEY)}`;
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) {
+    throw new Error(`Apps Script 請求失敗: ${res.status}`);
+  }
+  const data = await res.json();
+  if (data.error) {
+    throw new Error(`Apps Script 錯誤: ${data.error}`);
+  }
+  return data.uids || [];
+}
+
 async function signIn(uid) {
-  console.log(`\n========== UID: ${uid} ==========`);
+  console.log(`\n========== UID: ${maskUid(uid)} ==========`);
 
   // Step 1: reporting event
   await fetch(`${BASE}/api/v2/store/point/reporting`, {
@@ -101,15 +123,11 @@ async function signIn(uid) {
   }
 }
 
-// Read UIDs from file
-const uids = readFileSync("uids.txt", "utf-8")
-  .split("\n")
-  .map(line => line.trim())
-  .filter(line => line.length > 0);
-
-console.log(`找到 ${uids.length} 個帳號`);
+// 從 Google Sheet 獲取 UID
+const uids = await fetchApprovedUids();
+console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
 for (const uid of uids) {
   await signIn(uid);
-  await sleep(5000);  // 每個帳號之間等 5 秒
+  await sleep(5000);
 }
 console.log("\n全部完成！");
