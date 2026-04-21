@@ -24,3 +24,5 @@ jobs:
         run: node topheroes_redeem.mjs
         env:
           REDEEM_CODE: ${{ github.event.inputs.code }}
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_KEY: ${{ secrets.APPS_SCRIPT_KEY }}
