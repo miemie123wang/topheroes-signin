@@ -6,6 +6,9 @@ const PROJECT_ID = 1028637;
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
+const APPS_SCRIPT_KEY = process.env.APPS_SCRIPT_KEY;
+
 const CHANNEL_IDS = [
   "1343771733173473311",
   "1112595962515427338"
@@ -25,6 +28,27 @@ const discordHeaders = {
 };
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function maskUid(uid) {
+  if (uid.length <= 4) return "****";
+  return uid.slice(0, 2) + "*".repeat(uid.length - 4) + uid.slice(-2);
+}
+
+async function fetchApprovedUids() {
+  if (!APPS_SCRIPT_URL || !APPS_SCRIPT_KEY) {
+    throw new Error("缺少 APPS_SCRIPT_URL 或 APPS_SCRIPT_KEY 環境變量");
+  }
+  const url = `${APPS_SCRIPT_URL}?key=${encodeURIComponent(APPS_SCRIPT_KEY)}`;
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) {
+    throw new Error(`Apps Script 請求失敗: ${res.status}`);
+  }
+  const data = await res.json();
+  if (data.error) {
+    throw new Error(`Apps Script 錯誤: ${data.error}`);
+  }
+  return data.uids || [];
+}
 
 function loadLastMessageId() {
   if (existsSync(LAST_MSG_FILE)) {
@@ -132,7 +156,7 @@ async function checkDiscordChannel(lastMessageIds) {
 }
 
 async function redeemForUid(uid, code) {
-  console.log(`  UID: ${uid}`);
+  console.log(`  UID: ${maskUid(uid)}`);
 
   await fetch(`${BASE}/api/v2/store/point/reporting`, {
     method: "POST",
@@ -188,18 +212,13 @@ async function redeemForUid(uid, code) {
   }
 }
 
-async function redeemAllUids(code) {
-  const uids = readFileSync("uids.txt", "utf-8")
-    .split("\n")
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
-
+async function redeemAllUids(code, uids) {
   console.log(`開始為 ${uids.length} 個帳號兌換: ${code}`);
   for (const uid of uids) {
     await redeemForUid(uid, code);
     await sleep(3000 + Math.random() * 3000);
   }
-  
+
   console.log("全部兌換完成 ✓");
   const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
   await sendNotification(`✅ 網頁碼兌換成功！\n碼：\`${code}\`\n時間：${time}`);
@@ -211,11 +230,15 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("檢查 Discord 頻道...");
+  console.log("從 Google Sheet 獲取已 Approved 的 UID...");
+  const uids = await fetchApprovedUids();
+  if (uids.length === 0) {
+    console.log("沒有已 Approved 的 UID，結束");
+    return;
+  }
+  console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
 
-  const uids = readFileSync("uids.txt", "utf-8")
-    .split("\n").map(l => l.trim()).filter(l => l.length > 0);
-  console.log(`找到 ${uids.length} 個帳號`);
+  console.log("檢查 Discord 頻道...");
 
   let lastMessageIds = loadLastMessageId();
 
@@ -245,7 +268,7 @@ async function main() {
   saveLastMessageId(newLastIds);
 
   for (const code of codes) {
-    await redeemAllUids(code);
+    await redeemAllUids(code, uids);
   }
 
   for (const code of inGameCodes) {
