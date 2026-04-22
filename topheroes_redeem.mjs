@@ -113,7 +113,8 @@ async function redeemForUid(uid, code) {
 }
 
 // 從 Google Sheet 獲取 UID
-const uids = await fetchApprovedUids();
+// const uids = await fetchApprovedUids();
+const uids = ["1542311061888"];
 console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
 const code = await getCode();
 if (!code) {
