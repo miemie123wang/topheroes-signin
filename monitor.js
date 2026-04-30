@@ -230,16 +230,8 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("從 Google Sheet 獲取已 Approved 的 UID...");
-  const uids = await fetchApprovedUids();
-  if (uids.length === 0) {
-    console.log("沒有已 Approved 的 UID，結束");
-    return;
-  }
-  console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
-
+  // 1. 先检查 Discord 频道
   console.log("檢查 Discord 頻道...");
-
   let lastMessageIds = loadLastMessageId();
 
   let needsSave = false;
@@ -267,6 +259,21 @@ async function main() {
   const { newLastIds, codes, inGameCodes } = await checkDiscordChannel(lastMessageIds);
   saveLastMessageId(newLastIds);
 
+  // 2. 没有任何 code 就直接结束，不去拿 UID
+  if (!codes.length && !inGameCodes.length) {
+    console.log("沒有新 code");
+    return;
+  }
+
+  // 3. 有 code 才去拿 UID
+  console.log("發現新 code，從 Google Sheet 獲取已 Approved 的 UID...");
+  const uids = await fetchApprovedUids();
+  if (uids.length === 0) {
+    console.log("沒有已 Approved 的 UID，結束");
+    return;
+  }
+  console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
+
   for (const code of codes) {
     await redeemAllUids(code, uids);
   }
@@ -275,8 +282,6 @@ async function main() {
     await sendNotification(`🎮 發現遊戲內兌換碼：\`${code}\`\n請手動在遊戲內兌換！`);
     console.log(`已發送通知: ${code}`);
   }
-
-  if (!codes.length && !inGameCodes.length) console.log("沒有新 code");
 }
 
 main();
