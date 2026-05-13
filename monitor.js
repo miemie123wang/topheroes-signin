@@ -71,15 +71,22 @@ function saveLastMessageId(ids) {
 }
 
 function extractGiftCode(content) {
-  const match = content.match(/`([A-Za-z0-9]{6,20})`/);
-  if (
-    match &&
-    content.toLowerCase().includes("giftcode") &&
-    content.toLowerCase().includes("purchase center")
-  ) {
-    return match[1];
-  }
-  return null;
+  // 匹配反引号包裹的码
+  const backtickMatch = content.match(/`([A-Za-z0-9]{6,20})`/);
+  // 匹配标签后面单独一行的码（如 "Redeem Code 👇\nShoppingCartGB"）
+  const labelMatch = content.match(/(?:giftcode|redeem\s*code)[^\n]*\n+([A-Za-z0-9]{6,20})/i);
+
+  const code = backtickMatch?.[1] || labelMatch?.[1];
+  if (!code) return null;
+
+  // 只要有任意一个关键词就认为是网页码
+  const isWebCode =
+    content.toLowerCase().includes("giftcode") ||
+    content.toLowerCase().includes("redeem code") ||
+    content.toLowerCase().includes("purchase center") ||
+    content.toLowerCase().includes("gold block");
+
+  return isWebCode ? code : null;
 }
 
 function extractInGameCode(content) {
