@@ -221,14 +221,15 @@ async function redeemForUid(uid, code) {
 
 async function redeemAllUids(code, uids) {
   console.log(`開始為 ${uids.length} 個帳號兌換: ${code}`);
+  const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
+  await sendNotification(`✅ 網頁碼兌換成功！\n碼：\`${code}\`\n時間：${time}`);
+  
   for (const uid of uids) {
     await redeemForUid(uid, code);
     await sleep(3000 + Math.random() * 3000);
   }
 
   console.log("全部兌換完成 ✓");
-  const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
-  await sendNotification(`✅ 網頁碼兌換成功！\n碼：\`${code}\`\n時間：${time}`);
 }
 
 async function main() {
