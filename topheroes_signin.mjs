@@ -1,5 +1,5 @@
 const BASE = "https://topheroes.store.kopglobal.com";
-const ACTIVITY_ID = 2569;
+const ACTIVITY_ID = 3010;
 const SITE_ID = 1028526;
 const PROJECT_ID = 1028637;
 
@@ -83,13 +83,12 @@ async function signIn(uid) {
   const authedHeaders = { ...headers, authorization: token };
 
   // Step 3: get sign-in list
- // Step 3: get sign-in list
   const listRes = await fetch(
   `${BASE}/api/v2/store/sale/biz/sign-in-list?activity_id=${ACTIVITY_ID}&page_size=365&site_id=${SITE_ID}&page_no=1`,
   { headers: authedHeaders }
 );
 const listData = await listRes.json();
-  console.log("listData:", JSON.stringify(listData, null, 2));
+
   if (!listData.data || !listData.data.sign_in_list) {
     console.error("沒有簽到資料:", listData);
     return;
