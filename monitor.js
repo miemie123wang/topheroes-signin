@@ -55,9 +55,7 @@ function loadLastMessageId() {
     try {
       const content = readFileSync(LAST_MSG_FILE, "utf-8").trim();
       const parsed = JSON.parse(content);
-      if (typeof parsed !== "object" || parsed === null) {
-        return {};
-      }
+      if (typeof parsed !== "object" || parsed === null) return {};
       return parsed;
     } catch {
       return {};
@@ -71,35 +69,21 @@ function saveLastMessageId(ids) {
 }
 
 function extractGiftCode(content) {
-  // 匹配反引号包裹的码
+  // Match code in backticks
   const backtickMatch = content.match(/`([A-Za-z0-9]{6,20})`/);
-  // 匹配标签后面单独一行的码（如 "Redeem Code 👇\nShoppingCartGB"）
+  // Match code on a new line after a label
   const labelMatch = content.match(/(?:giftcode|redeem\s*code)[^\n]*\n+([A-Za-z0-9]{6,20})/i);
+  // Match code in a standalone block (Discord code block formatting)
+  const blockMatch = content.match(/^([A-Za-z0-9]{6,20})$/m);
 
-  const code = backtickMatch?.[1] || labelMatch?.[1];
+  const code = backtickMatch?.[1] || labelMatch?.[1] || blockMatch?.[1];
   if (!code) return null;
 
-  // 只要有任意一个关键词就认为是网页码
-  const isWebCode =
+  const hasCodeKeyword =
     content.toLowerCase().includes("giftcode") ||
-    content.toLowerCase().includes("redeem code") ||
-    content.toLowerCase().includes("purchase center") ||
-    content.toLowerCase().includes("gold block");
+    content.toLowerCase().includes("redeem code");
 
-  return isWebCode ? code : null;
-}
-
-function extractInGameCode(content) {
-  if (!content.toLowerCase().includes("giftcode")) return null;
-  if (content.toLowerCase().includes("purchase center")) return null;
-
-  const backtickMatch = content.match(/`([A-Za-z0-9]{6,20})`/);
-  if (backtickMatch) return backtickMatch[1];
-
-  const labelMatch = content.match(/giftcode[:\s,，\n]+([A-Za-z0-9]{6,20})/i);
-  if (labelMatch) return labelMatch[1];
-
-  return null;
+  return hasCodeKeyword ? code : null;
 }
 
 async function sendNotification(content) {
@@ -119,7 +103,6 @@ async function sendNotification(content) {
 
 async function checkDiscordChannel(lastMessageIds) {
   const allCodes = [];
-  const inGameCodes = [];
   const newLastIds = { ...lastMessageIds };
 
   for (const channelId of CHANNEL_IDS) {
@@ -143,23 +126,17 @@ async function checkDiscordChannel(lastMessageIds) {
     messages.sort((a, b) => (BigInt(a.id) > BigInt(b.id) ? 1 : -1));
 
     for (const msg of messages) {
-      const webCode = extractGiftCode(msg.content);
-      if (webCode && !allCodes.includes(webCode)) {
-        console.log(`頻道 ${channelId} 發現網頁兌換碼: ${webCode}`);
-        allCodes.push(webCode);
-      }
-
-      const igCode = extractInGameCode(msg.content);
-      if (igCode && !inGameCodes.includes(igCode)) {
-        console.log(`頻道 ${channelId} 發現遊戲內兌換碼: ${igCode}`);
-        inGameCodes.push(igCode);
+      const code = extractGiftCode(msg.content);
+      if (code && !allCodes.includes(code)) {
+        console.log(`頻道 ${channelId} 發現兌換碼: ${code}`);
+        allCodes.push(code);
       }
     }
 
     newLastIds[channelId] = messages[messages.length - 1].id;
   }
 
-  return { newLastIds, codes: allCodes, inGameCodes };
+  return { newLastIds, codes: allCodes };
 }
 
 async function redeemForUid(uid, code) {
@@ -193,12 +170,12 @@ async function redeemForUid(uid, code) {
   const loginData = await loginRes.json();
   if (loginData.code !== 1) {
     console.error(`  登錄失敗: ${loginData.message}`);
-    return;
+    return false;
   }
   const token = loginRes.headers.get("authorization");
   if (!token) {
     console.error("  沒有拿到 token");
-    return;
+    return false;
   }
   console.log(`  登錄成功 ✓ (${loginData.data.user.nickname})`);
   await sleep(1000);
@@ -214,21 +191,34 @@ async function redeemForUid(uid, code) {
   const redeemData = await redeemRes.json();
   if (redeemData.code === 1) {
     console.log(`  兌換成功 ✓`);
+    return true;
   } else {
     console.error(`  兌換失敗: ${redeemData.message}`);
+    return false;
   }
 }
 
 async function redeemAllUids(code, uids) {
   console.log(`開始為 ${uids.length} 個帳號兌換: ${code}`);
-  const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
-  await sendNotification(`✅ 網頁碼兌換成功！\n碼：\`${code}\`\n時間：${time}`);
-  
-  for (const uid of uids) {
-    await redeemForUid(uid, code);
-    await sleep(3000 + Math.random() * 3000);
+
+  // Notify that a code was found, pending verification
+  await sendNotification(`🎁 發現兌換碼：\`${code}\`\n正在嘗試網頁兌換，請稍候...`);
+
+  // Try first account to determine if it's a web code
+  const firstSuccess = await redeemForUid(uids[0], code);
+  if (!firstSuccess) {
+    await sendNotification(`🎮 \`${code}\` 網頁兌換失敗，請手動在遊戲內兌換！`);
+    return;
   }
 
+  // First succeeded, continue with the rest
+  for (const uid of uids.slice(1)) {
+    await sleep(3000 + Math.random() * 3000);
+    await redeemForUid(uid, code);
+  }
+
+  const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
+  await sendNotification(`✅ 網頁碼兌換完成！\n碼：\`${code}\`\n時間：${time}`);
   console.log("全部兌換完成 ✓");
 }
 
@@ -238,10 +228,10 @@ async function main() {
     process.exit(1);
   }
 
-  // 1. 先检查 Discord 频道
   console.log("檢查 Discord 頻道...");
   let lastMessageIds = loadLastMessageId();
 
+  // Initialize if first run
   let needsSave = false;
   for (const channelId of CHANNEL_IDS) {
     if (!lastMessageIds[channelId]) {
@@ -264,16 +254,14 @@ async function main() {
     return;
   }
 
-  const { newLastIds, codes, inGameCodes } = await checkDiscordChannel(lastMessageIds);
+  const { newLastIds, codes } = await checkDiscordChannel(lastMessageIds);
   saveLastMessageId(newLastIds);
 
-  // 2. 没有任何 code 就直接结束，不去拿 UID
-  if (!codes.length && !inGameCodes.length) {
+  if (!codes.length) {
     console.log("沒有新 code");
     return;
   }
 
-  // 3. 有 code 才去拿 UID
   console.log("發現新 code，從 Google Sheet 獲取已 Approved 的 UID...");
   const uids = await fetchApprovedUids();
   if (uids.length === 0) {
@@ -284,11 +272,6 @@ async function main() {
 
   for (const code of codes) {
     await redeemAllUids(code, uids);
-  }
-
-  for (const code of inGameCodes) {
-    await sendNotification(`🎮 發現遊戲內兌換碼：\`${code}\`\n請手動在遊戲內兌換！`);
-    console.log(`已發送通知: ${code}`);
   }
 }
 
