@@ -79,10 +79,7 @@ function extractGiftCode(content) {
   const code = backtickMatch?.[1] || labelMatch?.[1] || blockMatch?.[1];
   if (!code) return null;
 
-  const hasCodeKeyword =
-    content.toLowerCase().includes("giftcode") ||
-    content.toLowerCase().includes("redeem code");
-
+  const hasCodeKeyword = /code|gift|redeem/i.test(content);
   return hasCodeKeyword ? code : null;
 }
 
