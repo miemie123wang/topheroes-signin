@@ -31,9 +31,10 @@ jobs:
         run: node monitor.js
 
       - name: Save last message ID
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add last_message_id.txt
-          git diff --staged --quiet || git commit -m "Update last message ID"
-          git push
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git add last_message_id.txt
+        git diff --staged --quiet || git commit -m "Update last message ID"
+        git pull --rebase
+        git push
