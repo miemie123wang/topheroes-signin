@@ -126,6 +126,7 @@ async function checkDiscordChannel(lastMessageIds) {
     messages.sort((a, b) => (BigInt(a.id) > BigInt(b.id) ? 1 : -1));
 
     for (const msg of messages) {
+  console.log("原始消息:", JSON.stringify(msg.content)); // 加这行
       const code = extractGiftCode(msg.content);
       if (code && !allCodes.includes(code)) {
         console.log(`頻道 ${channelId} 發現兌換碼: ${code}`);
