@@ -16,8 +16,13 @@ const headers = {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function maskUid(uid) {
+  uid = String(uid);
   if (uid.length <= 4) return "****";
   return uid.slice(0, 2) + "*".repeat(uid.length - 4) + uid.slice(-2);
+}
+
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 async function fetchApprovedUids() {
@@ -41,7 +46,7 @@ async function fetchApprovedUids() {
   return data.uids || [];
 }
 
-async function getSignInList(authedHeaders) {
+async function getSignInData(authedHeaders) {
   const listRes = await fetch(
     `${BASE}/api/v2/store/sale/biz/sign-in-list?activity_id=${ACTIVITY_ID}&page_size=365&site_id=${SITE_ID}&page_no=1`,
     { headers: authedHeaders }
@@ -54,16 +59,13 @@ async function getSignInList(authedHeaders) {
     return null;
   }
 
-  return listData.data.sign_in_list;
+  return listData.data;
 }
 
 function getMakeupItems(signInList) {
   return signInList.filter(item =>
-    item.is_available_sign_in &&
-    !item.is_sign_in &&
     item.is_appending &&
-    item.day_no &&
-    item.appending_date
+    !item.is_sign_in
   );
 }
 
@@ -98,7 +100,7 @@ async function receiveMakeupSignIn(authedHeaders, item) {
       sign_in_type: 2,
       site_id: SITE_ID,
       day_no: item.day_no,
-      appending_date: item.appending_date
+      appending_date: getTodayDateString()
     })
   });
 
@@ -158,29 +160,27 @@ async function signIn(uid) {
     authorization: token
   };
 
-  let signInList = await getSignInList(authedHeaders);
-
-  if (!signInList) return;
+  let signInData = await getSignInData(authedHeaders);
+  if (!signInData) return;
 
   console.log("Step 3: 取得簽到列表 ✓");
+  console.log(`已簽到天數: ${signInData.has_sign_in_days}`);
+  console.log(`剩餘補簽次數: ${signInData.remain_appending_days}`);
 
-  // 先補簽：每補一次，都重新查一次列表
+  // Step 4: 先補簽
   while (true) {
-    const makeupItems = getMakeupItems(signInList);
+    const makeupItems = getMakeupItems(signInData.sign_in_list);
 
-    console.log(`目前可補簽 ${makeupItems.length} 天`);
+    console.log(`目前可補簽 ${makeupItems.length} 天，剩餘補簽次數 ${signInData.remain_appending_days}`);
 
-    if (makeupItems.length === 0) {
+    if (makeupItems.length === 0 || signInData.remain_appending_days <= 0) {
+      console.log("沒有可補簽項目，或補簽次數已用完。");
       break;
-    }
-
-    for (const item of makeupItems) {
-      console.log(`可補簽：day ${item.day_no}, date ${item.appending_date}`);
     }
 
     const item = makeupItems[0];
 
-    console.log(`開始補簽：day ${item.day_no}, date ${item.appending_date}`);
+    console.log(`開始補簽：day ${item.day_no}`);
 
     const receiveData = await receiveMakeupSignIn(authedHeaders, item);
 
@@ -193,22 +193,20 @@ async function signIn(uid) {
 
     await sleep(3000);
 
-    signInList = await getSignInList(authedHeaders);
-
-    if (!signInList) return;
+    signInData = await getSignInData(authedHeaders);
+    if (!signInData) return;
   }
 
-  // 再簽今天
-  signInList = await getSignInList(authedHeaders);
+  // Step 5: 再簽今天
+  signInData = await getSignInData(authedHeaders);
+  if (!signInData) return;
 
-  if (!signInList) return;
-
-  const today = getTodayItem(signInList);
+  const today = getTodayItem(signInData.sign_in_list);
 
   if (!today) {
     console.log("今天已經簽到，或沒有今天可簽項目。");
   } else {
-    console.log(`今天可以簽到 day ${today.day_no}`);
+    console.log(`Step 5: 今天可以簽到 day ${today.day_no}`);
 
     const receiveData = await receiveTodaySignIn(authedHeaders);
 
@@ -222,17 +220,18 @@ async function signIn(uid) {
     await sleep(3000);
   }
 
-  // 最後再檢查一次
-  signInList = await getSignInList(authedHeaders);
+  // Step 6: 最後檢查
+  signInData = await getSignInData(authedHeaders);
+  if (!signInData) return;
 
-  if (!signInList) return;
+  const remainingMakeupItems = getMakeupItems(signInData.sign_in_list);
 
-  const remainingMakeupItems = getMakeupItems(signInList);
+  console.log(`最後檢查：已簽到天數 ${signInData.has_sign_in_days}`);
+  console.log(`最後檢查：剩餘補簽次數 ${signInData.remain_appending_days}`);
+  console.log(`最後檢查：可補簽項目 ${remainingMakeupItems.length}`);
 
   if (remainingMakeupItems.length === 0) {
-    console.log("最後檢查：沒有剩餘可補簽項目 ✓");
-  } else {
-    console.log(`最後檢查：仍有 ${remainingMakeupItems.length} 天可補簽`);
+    console.log("完成：沒有剩餘可補簽項目 ✓");
   }
 }
 
