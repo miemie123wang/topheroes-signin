@@ -1,10 +1,10 @@
 const BASE = "https://topheroes.store.kopglobal.com";
-const ACTIVITY_ID = 3261;
 const SITE_ID = 1028526;
 const PROJECT_ID = 1028637;
 
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 const APPS_SCRIPT_KEY = process.env.APPS_SCRIPT_KEY;
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 const headers = {
   "Content-Type": "application/json",
@@ -15,6 +15,20 @@ const headers = {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function randomSleep(min, max) {
+  return sleep(Math.floor(Math.random() * (max - min + 1)) + min);
+}
+
+const stats = {
+  total: 0,
+  success: 0,
+  failed: 0,
+  today: 0,
+  makeup: 0,
+  alreadyDone: 0,
+  failures: []
+};
+
 function maskUid(uid) {
   uid = String(uid);
   if (uid.length <= 4) return "****";
@@ -23,6 +37,20 @@ function maskUid(uid) {
 
 function getTodayDateString() {
   return new Date().toISOString().slice(0, 10);
+}
+
+async function sendDiscord(message) {
+  if (!DISCORD_WEBHOOK_URL) return;
+
+  try {
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: message })
+    });
+  } catch (err) {
+    console.error("Discord 通知失敗:", err.message);
+  }
 }
 
 async function fetchApprovedUids() {
@@ -46,20 +74,79 @@ async function fetchApprovedUids() {
   return data.uids || [];
 }
 
-async function getSignInData(authedHeaders) {
-  const listRes = await fetch(
-    `${BASE}/api/v2/store/sale/biz/sign-in-list?activity_id=${ACTIVITY_ID}&page_size=365&site_id=${SITE_ID}&page_no=1`,
+async function login(uid) {
+  const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      site_id: SITE_ID,
+      player_id: uid,
+      server_id: "",
+      device: "mobile"
+    })
+  });
+
+  const loginData = await loginRes.json();
+
+  if (loginData.code !== 1) {
+    throw new Error(`登錄失敗: ${loginData.message || JSON.stringify(loginData)}`);
+  }
+
+  const token = loginRes.headers.get("authorization");
+
+  if (!token) {
+    throw new Error("沒有拿到 token");
+  }
+
+  return {
+    nickname: loginData.data.user.nickname,
+    authedHeaders: {
+      ...headers,
+      authorization: token
+    }
+  };
+}
+
+async function getCurrentSignActivityId(authedHeaders) {
+  const res = await fetch(
+    `${BASE}/api/v2/store/sale/biz/list?project_id=${PROJECT_ID}&status=2`,
     { headers: authedHeaders }
   );
 
-  const listData = await listRes.json();
+  const data = await res.json();
 
-  if (!listData.data || !listData.data.sign_in_list) {
-    console.error("沒有簽到資料:", listData);
-    return null;
+  if (!data?.data?.list) {
+    throw new Error(`沒有取得活動列表: ${JSON.stringify(data)}`);
   }
 
-  return listData.data;
+  const activity = data.data.list.find(item =>
+    item.activity_type === 4 &&
+    item.status === 2 &&
+    item.activity_switch === 1
+  );
+
+  if (!activity) {
+    throw new Error("沒有找到進行中的簽到活動");
+  }
+
+  console.log(`目前簽到活動：${activity.name} / biz_id=${activity.biz_id}`);
+
+  return activity.biz_id;
+}
+
+async function getSignInData(authedHeaders, activityId) {
+  const res = await fetch(
+    `${BASE}/api/v2/store/sale/biz/sign-in-list?activity_id=${activityId}&page_size=365&site_id=${SITE_ID}&page_no=1`,
+    { headers: authedHeaders }
+  );
+
+  const data = await res.json();
+
+  if (!data?.data?.sign_in_list) {
+    throw new Error(`沒有簽到資料: ${JSON.stringify(data)}`);
+  }
+
+  return data.data;
 }
 
 function getMakeupItems(signInList) {
@@ -77,26 +164,12 @@ function getTodayItem(signInList) {
   );
 }
 
-async function receiveTodaySignIn(authedHeaders) {
-  const receiveRes = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
+async function receiveMakeupSignIn(authedHeaders, activityId, item) {
+  const res = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
     method: "POST",
     headers: authedHeaders,
     body: JSON.stringify({
-      activity_id: ACTIVITY_ID,
-      sign_in_type: 1,
-      site_id: SITE_ID
-    })
-  });
-
-  return await receiveRes.json();
-}
-
-async function receiveMakeupSignIn(authedHeaders, item) {
-  const receiveRes = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
-    method: "POST",
-    headers: authedHeaders,
-    body: JSON.stringify({
-      activity_id: ACTIVITY_ID,
+      activity_id: activityId,
       sign_in_type: 2,
       site_id: SITE_ID,
       day_no: item.day_no,
@@ -104,77 +177,40 @@ async function receiveMakeupSignIn(authedHeaders, item) {
     })
   });
 
-  return await receiveRes.json();
+  return await res.json();
 }
 
-async function signIn(uid) {
-  console.log(`\n========== UID: ${maskUid(uid)} ==========`);
-
-  await fetch(`${BASE}/api/v2/store/point/reporting`, {
+async function receiveTodaySignIn(authedHeaders, activityId) {
+  const res = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
     method: "POST",
-    headers,
+    headers: authedHeaders,
     body: JSON.stringify({
-      project_id: PROJECT_ID,
-      store_id: SITE_ID,
-      merchant_id: 1002558,
-      country: "CA",
-      type: "UID_LOGIN_SHOW",
-      device: "mobile",
-      platform: "android"
+      activity_id: activityId,
+      sign_in_type: 1,
+      site_id: SITE_ID
     })
   });
 
-  console.log("Step 1: reporting ✓");
-  await sleep(2000);
+  return await res.json();
+}
 
-  const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      site_id: SITE_ID,
-      player_id: uid,
-      server_id: "",
-      device: "mobile"
-    })
-  });
+async function processSignedInAccount(nickname, authedHeaders, activityId) {
+  console.log(`登錄成功 ✓ (${nickname})`);
 
-  const loginData = await loginRes.json();
+  let signInData = await getSignInData(authedHeaders, activityId);
 
-  if (loginData.code !== 1) {
-    console.error("登錄失敗:", loginData);
-    return;
-  }
-
-  const token = loginRes.headers.get("authorization");
-
-  if (!token) {
-    console.error("沒有拿到 token");
-    return;
-  }
-
-  console.log(`Step 2: 登錄成功 ✓ (${loginData.data.user.nickname})`);
-  await sleep(2000);
-
-  const authedHeaders = {
-    ...headers,
-    authorization: token
-  };
-
-  let signInData = await getSignInData(authedHeaders);
-  if (!signInData) return;
-
-  console.log("Step 3: 取得簽到列表 ✓");
   console.log(`已簽到天數: ${signInData.has_sign_in_days}`);
   console.log(`剩餘補簽次數: ${signInData.remain_appending_days}`);
 
-  // Step 4: 先補簽
+  let makeupCount = 0;
+  let todaySigned = false;
+
   while (true) {
     const makeupItems = getMakeupItems(signInData.sign_in_list);
 
     console.log(`目前可補簽 ${makeupItems.length} 天，剩餘補簽次數 ${signInData.remain_appending_days}`);
 
     if (makeupItems.length === 0 || signInData.remain_appending_days <= 0) {
-      console.log("沒有可補簽項目，或補簽次數已用完。");
       break;
     }
 
@@ -182,66 +218,158 @@ async function signIn(uid) {
 
     console.log(`開始補簽：day ${item.day_no}`);
 
-    const receiveData = await receiveMakeupSignIn(authedHeaders, item);
+    const receiveData = await receiveMakeupSignIn(authedHeaders, activityId, item);
 
-    if (receiveData.code === 1) {
-      console.log(`補簽成功 ✓ day ${item.day_no}`);
-    } else {
-      console.error("補簽失敗:", receiveData);
-      return;
+    if (receiveData.code !== 1) {
+      throw new Error(`補簽失敗: ${JSON.stringify(receiveData)}`);
     }
 
-    await sleep(3000);
+    makeupCount++;
+    stats.makeup++;
 
-    signInData = await getSignInData(authedHeaders);
-    if (!signInData) return;
+    console.log(`補簽成功 ✓ day ${item.day_no}`);
+
+    await randomSleep(1500, 3500);
+
+    signInData = await getSignInData(authedHeaders, activityId);
   }
-
-  // Step 5: 再簽今天
-  signInData = await getSignInData(authedHeaders);
-  if (!signInData) return;
 
   const today = getTodayItem(signInData.sign_in_list);
 
   if (!today) {
     console.log("今天已經簽到，或沒有今天可簽項目。");
   } else {
-    console.log(`Step 5: 今天可以簽到 day ${today.day_no}`);
+    console.log(`今天可以簽到 day ${today.day_no}`);
 
-    const receiveData = await receiveTodaySignIn(authedHeaders);
+    const receiveData = await receiveTodaySignIn(authedHeaders, activityId);
 
-    if (receiveData.code === 1) {
-      console.log("今天簽到成功 ✓");
-    } else {
-      console.error("今天簽到失敗:", receiveData);
-      return;
+    if (receiveData.code !== 1) {
+      throw new Error(`今天簽到失敗: ${JSON.stringify(receiveData)}`);
     }
 
-    await sleep(3000);
+    todaySigned = true;
+    stats.today++;
+
+    console.log("今天簽到成功 ✓");
+
+    await randomSleep(1500, 3500);
   }
 
-  // Step 6: 最後檢查
-  signInData = await getSignInData(authedHeaders);
-  if (!signInData) return;
-
-  const remainingMakeupItems = getMakeupItems(signInData.sign_in_list);
-
-  console.log(`最後檢查：已簽到天數 ${signInData.has_sign_in_days}`);
-  console.log(`最後檢查：剩餘補簽次數 ${signInData.remain_appending_days}`);
-  console.log(`最後檢查：可補簽項目 ${remainingMakeupItems.length}`);
-
-  if (remainingMakeupItems.length === 0) {
-    console.log("完成：沒有剩餘可補簽項目 ✓");
+  if (makeupCount === 0 && !todaySigned) {
+    stats.alreadyDone++;
   }
+
+  stats.success++;
+
+  return {
+    nickname,
+    makeupCount,
+    todaySigned
+  };
+}
+
+async function processUid(uid, activityId) {
+  console.log(`\n========== UID: ${maskUid(uid)} ==========`);
+
+  const loginInfo = await login(uid);
+
+  return await processSignedInAccount(
+    loginInfo.nickname,
+    loginInfo.authedHeaders,
+    activityId
+  );
 }
 
 const uids = await fetchApprovedUids();
+stats.total = uids.length;
 
 console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
 
-for (const uid of uids) {
-  await signIn(uid);
-  await sleep(5000);
+if (uids.length === 0) {
+  console.log("沒有 UID，結束。");
+  process.exit(0);
 }
+
+let activityId = null;
+
+// 第一個 UID：登录一次，拿 activityId，然后直接签到/补签。
+// 如果第一個 UID 拿 activityId 或签到失败，停止整个程序。
+try {
+  const firstUid = uids[0];
+
+  console.log(`\n========== 第一個 UID: ${maskUid(firstUid)} ==========`);
+
+  const firstLogin = await login(firstUid);
+
+  console.log(`第一個帳號登錄成功 ✓ (${firstLogin.nickname})`);
+
+  activityId = await getCurrentSignActivityId(firstLogin.authedHeaders);
+
+  console.log(`全局 Activity ID 已確認：${activityId}`);
+
+  const firstResult = await processSignedInAccount(
+    firstLogin.nickname,
+    firstLogin.authedHeaders,
+    activityId
+  );
+
+  console.log(`第一個帳號完成：${firstResult.nickname}，補簽 ${firstResult.makeupCount} 次，今天簽到：${firstResult.todaySigned ? "是" : "否"}`);
+
+} catch (err) {
+  stats.failed++;
+
+  const msg =
+`🚨 Top Heroes 簽到中止
+第一個 UID 失敗，已停止後續帳號。
+UID: ${maskUid(uids[0])}
+原因: ${err.message}`;
+
+  console.error(msg);
+  await sendDiscord(msg);
+
+  process.exit(1);
+}
+
+// 後續 UID：共用第一個帳號取得的 activityId。
+// 後續單個帳號失敗只發 Discord，繼續下一個。
+for (let i = 1; i < uids.length; i++) {
+  const uid = uids[i];
+
+  try {
+    const result = await processUid(uid, activityId);
+
+    console.log(`完成：${result.nickname}，補簽 ${result.makeupCount} 次，今天簽到：${result.todaySigned ? "是" : "否"}`);
+
+  } catch (err) {
+    stats.failed++;
+
+    const msg =
+`❌ Top Heroes 簽到失敗
+進度: ${i + 1}/${uids.length}
+UID: ${maskUid(uid)}
+Activity ID: ${activityId}
+原因: ${err.message}`;
+
+    stats.failures.push(msg);
+
+    console.error(msg);
+    await sendDiscord(msg);
+  }
+
+  await randomSleep(5000, 10000);
+}
+
+const summary =
+`✅ Top Heroes 簽到完成
+總數: ${stats.total}
+成功: ${stats.success}
+失敗: ${stats.failed}
+今日簽到: ${stats.today}
+補簽次數: ${stats.makeup}
+已完成/無需操作: ${stats.alreadyDone}
+Activity ID: ${activityId}`;
+
+console.log("\n" + summary);
+await sendDiscord(summary);
 
 console.log("\n全部完成！");
