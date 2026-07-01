@@ -74,7 +74,6 @@ async function receiveSignIn(authedHeaders) {
 async function signIn(uid) {
   console.log(`\n========== UID: ${maskUid(uid)} ==========`);
 
-  // Step 1: reporting event
   await fetch(`${BASE}/api/v2/store/point/reporting`, {
     method: "POST",
     headers,
@@ -92,7 +91,6 @@ async function signIn(uid) {
   console.log("Step 1: reporting ✓");
   await sleep(2000);
 
-  // Step 2: login and get token
   const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
     method: "POST",
     headers,
@@ -126,14 +124,13 @@ async function signIn(uid) {
     authorization: token
   };
 
-  // Step 3: 取得簽到列表
   let signInList = await getSignInList(authedHeaders);
 
   if (!signInList) return;
 
   console.log("Step 3: 取得簽到列表 ✓");
 
-  // Step 4: 先補簽
+  // Step 4: 先循環補簽，直到沒有可補簽項目
   while (true) {
     const makeupItems = signInList.filter(item =>
       item.is_available_sign_in &&
@@ -167,7 +164,7 @@ async function signIn(uid) {
     if (!signInList) return;
   }
 
-  // Step 5: 再簽今天
+  // Step 5: 補簽完成後，再簽今天
   const today = signInList.find(item =>
     item.is_available_sign_in &&
     !item.is_sign_in &&
@@ -176,21 +173,53 @@ async function signIn(uid) {
 
   if (!today) {
     console.log("今天已經簽到，或沒有今天可簽項目。");
-    return;
+  } else {
+    console.log(`Step 5: 今天可以簽到 day ${today.day_no}`);
+
+    const receiveData = await receiveSignIn(authedHeaders);
+
+    if (receiveData.code === 1) {
+      console.log("今天簽到成功 ✓");
+    } else {
+      console.error("今天簽到失敗:", receiveData);
+      return;
+    }
+
+    await sleep(3000);
   }
 
-  console.log(`Step 5: 今天可以簽到 day ${today.day_no}`);
+  // Step 6: 簽完今天後，再檢查一次補簽，直到沒有
+  while (true) {
+    signInList = await getSignInList(authedHeaders);
 
-  const receiveData = await receiveSignIn(authedHeaders);
+    if (!signInList) return;
 
-  if (receiveData.code === 1) {
-    console.log("今天簽到成功 ✓");
-  } else {
-    console.error("今天簽到失敗:", receiveData);
+    const remainingMakeupItems = signInList.filter(item =>
+      item.is_available_sign_in &&
+      !item.is_sign_in &&
+      item.is_appending
+    );
+
+    if (remainingMakeupItems.length === 0) {
+      console.log("最後檢查：沒有剩餘補簽項目 ✓");
+      break;
+    }
+
+    console.log(`最後檢查：還有 ${remainingMakeupItems.length} 個補簽項目，繼續補簽...`);
+
+    const receiveData = await receiveSignIn(authedHeaders);
+
+    if (receiveData.code === 1) {
+      console.log("補簽成功 ✓");
+    } else {
+      console.error("補簽失敗:", receiveData);
+      return;
+    }
+
+    await sleep(3000);
   }
 }
 
-// 從 Google Sheet 獲取 UID
 const uids = await fetchApprovedUids();
 
 console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
