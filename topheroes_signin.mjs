@@ -8,12 +8,13 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 const headers = {
   "Content-Type": "application/json",
-  "accept": "application/json, text/plain, */*",
-  "user-agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
-  "cookie": "lang=en"
+  accept: "application/json, text/plain, */*",
+  "user-agent":
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+  cookie: "lang=en"
 };
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function randomSleep(min, max) {
   return sleep(Math.floor(Math.random() * (max - min + 1)) + min);
@@ -39,6 +40,40 @@ function getTodayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+async function fetchJson(url, options = {}, retries = 2) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      const text = await res.text();
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`回傳不是 JSON，HTTP ${res.status}: ${text.slice(0, 200)}`);
+      }
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+      }
+
+      return data;
+    } catch (err) {
+      lastError = err;
+
+      if (attempt < retries) {
+        const wait = 1000 + attempt * 1500;
+        console.warn(`請求失敗，${wait}ms 後重試 ${attempt + 1}/${retries}: ${err.message}`);
+        await sleep(wait);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 async function sendDiscord(message) {
   if (!DISCORD_WEBHOOK_URL) return;
 
@@ -59,13 +94,7 @@ async function fetchApprovedUids() {
   }
 
   const url = `${APPS_SCRIPT_URL}?key=${encodeURIComponent(APPS_SCRIPT_KEY)}`;
-  const res = await fetch(url, { redirect: "follow" });
-
-  if (!res.ok) {
-    throw new Error(`Apps Script 請求失敗: ${res.status}`);
-  }
-
-  const data = await res.json();
+  const data = await fetchJson(url, { redirect: "follow" });
 
   if (data.error) {
     throw new Error(`Apps Script 錯誤: ${data.error}`);
@@ -75,7 +104,9 @@ async function fetchApprovedUids() {
 }
 
 async function login(uid) {
-  const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
+  const url = `${BASE}/api/v2/store/login/player`;
+
+  const loginData = await fetchJson(url, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -86,11 +117,21 @@ async function login(uid) {
     })
   });
 
-  const loginData = await loginRes.json();
-
   if (loginData.code !== 1) {
     throw new Error(`登錄失敗: ${loginData.message || JSON.stringify(loginData)}`);
   }
+
+  // token 在 response header 裡，不能從 fetchJson 拿，所以這裡單獨 fetch 一次
+  const loginRes = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      site_id: SITE_ID,
+      player_id: uid,
+      server_id: "",
+      device: "mobile"
+    })
+  });
 
   const token = loginRes.headers.get("authorization");
 
@@ -107,40 +148,38 @@ async function login(uid) {
   };
 }
 
-async function getCurrentSignActivityId(authedHeaders) {
-  const res = await fetch(
+async function getCurrentSignActivity(authedHeaders) {
+  const data = await fetchJson(
     `${BASE}/api/v2/store/sale/biz/list?project_id=${PROJECT_ID}&status=2`,
     { headers: authedHeaders }
   );
-
-  const data = await res.json();
 
   if (!data?.data?.list) {
     throw new Error(`沒有取得活動列表: ${JSON.stringify(data)}`);
   }
 
-  const activity = data.data.list.find(item =>
-    item.activity_type === 4 &&
-    item.status === 2 &&
-    item.activity_switch === 1
+  const activity = data.data.list.find(
+    (item) =>
+      item.activity_type === 4 &&
+      item.status === 2 &&
+      item.activity_switch === 1
   );
 
   if (!activity) {
     throw new Error("沒有找到進行中的簽到活動");
   }
 
-  console.log(`目前簽到活動：${activity.name} / biz_id=${activity.biz_id}`);
-
-  return activity.biz_id;
+  return {
+    id: activity.biz_id,
+    name: activity.name
+  };
 }
 
 async function getSignInData(authedHeaders, activityId) {
-  const res = await fetch(
+  const data = await fetchJson(
     `${BASE}/api/v2/store/sale/biz/sign-in-list?activity_id=${activityId}&page_size=365&site_id=${SITE_ID}&page_no=1`,
     { headers: authedHeaders }
   );
-
-  const data = await res.json();
 
   if (!data?.data?.sign_in_list) {
     throw new Error(`沒有簽到資料: ${JSON.stringify(data)}`);
@@ -150,22 +189,20 @@ async function getSignInData(authedHeaders, activityId) {
 }
 
 function getMakeupItems(signInList) {
-  return signInList.filter(item =>
-    item.is_appending &&
-    !item.is_sign_in
-  );
+  return signInList.filter((item) => item.is_appending && !item.is_sign_in);
 }
 
 function getTodayItem(signInList) {
-  return signInList.find(item =>
-    item.is_available_sign_in &&
-    !item.is_sign_in &&
-    !item.is_appending
+  return signInList.find(
+    (item) =>
+      item.is_available_sign_in &&
+      !item.is_sign_in &&
+      !item.is_appending
   );
 }
 
 async function receiveMakeupSignIn(authedHeaders, activityId, item) {
-  const res = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
+  const data = await fetchJson(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
     method: "POST",
     headers: authedHeaders,
     body: JSON.stringify({
@@ -177,11 +214,15 @@ async function receiveMakeupSignIn(authedHeaders, activityId, item) {
     })
   });
 
-  return await res.json();
+  if (data.code !== 1) {
+    throw new Error(`補簽失敗: ${JSON.stringify(data)}`);
+  }
+
+  return data;
 }
 
 async function receiveTodaySignIn(authedHeaders, activityId) {
-  const res = await fetch(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
+  const data = await fetchJson(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
     method: "POST",
     headers: authedHeaders,
     body: JSON.stringify({
@@ -191,16 +232,25 @@ async function receiveTodaySignIn(authedHeaders, activityId) {
     })
   });
 
-  return await res.json();
+  if (data.code !== 1) {
+    throw new Error(`今天簽到失敗: ${JSON.stringify(data)}`);
+  }
+
+  return data;
 }
 
-async function processSignedInAccount(nickname, authedHeaders, activityId) {
-  console.log(`登錄成功 ✓ (${nickname})`);
-
-  let signInData = await getSignInData(authedHeaders, activityId);
-
-  console.log(`已簽到天數: ${signInData.has_sign_in_days}`);
+function logSignStatus(signInData) {
+  const total = signInData.sign_in_list?.length ?? "?";
+  console.log(`已簽到天數: ${signInData.has_sign_in_days}/${total}`);
   console.log(`剩餘補簽次數: ${signInData.remain_appending_days}`);
+}
+
+async function processSignedInAccount(nickname, authedHeaders, activity) {
+  console.log(`開始處理 ✓ (${nickname})`);
+
+  let signInData = await getSignInData(authedHeaders, activity.id);
+
+  logSignStatus(signInData);
 
   let makeupCount = 0;
   let todaySigned = false;
@@ -208,7 +258,7 @@ async function processSignedInAccount(nickname, authedHeaders, activityId) {
   while (true) {
     const makeupItems = getMakeupItems(signInData.sign_in_list);
 
-    console.log(`目前可補簽 ${makeupItems.length} 天，剩餘補簽次數 ${signInData.remain_appending_days}`);
+    console.log(`目前可補簽 ${makeupItems.length} 天`);
 
     if (makeupItems.length === 0 || signInData.remain_appending_days <= 0) {
       break;
@@ -218,11 +268,7 @@ async function processSignedInAccount(nickname, authedHeaders, activityId) {
 
     console.log(`開始補簽：day ${item.day_no}`);
 
-    const receiveData = await receiveMakeupSignIn(authedHeaders, activityId, item);
-
-    if (receiveData.code !== 1) {
-      throw new Error(`補簽失敗: ${JSON.stringify(receiveData)}`);
-    }
+    await receiveMakeupSignIn(authedHeaders, activity.id, item);
 
     makeupCount++;
     stats.makeup++;
@@ -231,21 +277,15 @@ async function processSignedInAccount(nickname, authedHeaders, activityId) {
 
     await randomSleep(1500, 3500);
 
-    signInData = await getSignInData(authedHeaders, activityId);
+    signInData = await getSignInData(authedHeaders, activity.id);
   }
 
   const today = getTodayItem(signInData.sign_in_list);
 
-  if (!today) {
-    console.log("今天已經簽到，或沒有今天可簽項目。");
-  } else {
+  if (today) {
     console.log(`今天可以簽到 day ${today.day_no}`);
 
-    const receiveData = await receiveTodaySignIn(authedHeaders, activityId);
-
-    if (receiveData.code !== 1) {
-      throw new Error(`今天簽到失敗: ${JSON.stringify(receiveData)}`);
-    }
+    await receiveTodaySignIn(authedHeaders, activity.id);
 
     todaySigned = true;
     stats.today++;
@@ -253,6 +293,10 @@ async function processSignedInAccount(nickname, authedHeaders, activityId) {
     console.log("今天簽到成功 ✓");
 
     await randomSleep(1500, 3500);
+  } else if (signInData.has_sign_in_days >= signInData.sign_in_list_total) {
+    console.log("今天已簽到 ✓");
+  } else {
+    console.log("沒有今天可簽項目");
   }
 
   if (makeupCount === 0 && !todaySigned) {
@@ -268,7 +312,7 @@ async function processSignedInAccount(nickname, authedHeaders, activityId) {
   };
 }
 
-async function processUid(uid, activityId) {
+async function processUid(uid, activity) {
   console.log(`\n========== UID: ${maskUid(uid)} ==========`);
 
   const loginInfo = await login(uid);
@@ -276,11 +320,12 @@ async function processUid(uid, activityId) {
   return await processSignedInAccount(
     loginInfo.nickname,
     loginInfo.authedHeaders,
-    activityId
+    activity
   );
 }
 
 const uids = await fetchApprovedUids();
+
 stats.total = uids.length;
 
 console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
@@ -290,10 +335,8 @@ if (uids.length === 0) {
   process.exit(0);
 }
 
-let activityId = null;
+let activity = null;
 
-// 第一個 UID：登录一次，拿 activityId，然后直接签到/补签。
-// 如果第一個 UID 拿 activityId 或签到失败，停止整个程序。
 try {
   const firstUid = uids[0];
 
@@ -303,18 +346,19 @@ try {
 
   console.log(`第一個帳號登錄成功 ✓ (${firstLogin.nickname})`);
 
-  activityId = await getCurrentSignActivityId(firstLogin.authedHeaders);
+  activity = await getCurrentSignActivity(firstLogin.authedHeaders);
 
-  console.log(`全局 Activity ID 已確認：${activityId}`);
+  console.log(`目前簽到活動：${activity.name} / biz_id=${activity.id}`);
 
   const firstResult = await processSignedInAccount(
     firstLogin.nickname,
     firstLogin.authedHeaders,
-    activityId
+    activity
   );
 
-  console.log(`第一個帳號完成：${firstResult.nickname}，補簽 ${firstResult.makeupCount} 次，今天簽到：${firstResult.todaySigned ? "是" : "否"}`);
-
+  console.log(
+    `第一個帳號完成：${firstResult.nickname}，補簽 ${firstResult.makeupCount} 次，今天簽到：${firstResult.todaySigned ? "是" : "否"}`
+  );
 } catch (err) {
   stats.failed++;
 
@@ -330,16 +374,15 @@ UID: ${maskUid(uids[0])}
   process.exit(1);
 }
 
-// 後續 UID：共用第一個帳號取得的 activityId。
-// 後續單個帳號失敗只發 Discord，繼續下一個。
 for (let i = 1; i < uids.length; i++) {
   const uid = uids[i];
 
   try {
-    const result = await processUid(uid, activityId);
+    const result = await processUid(uid, activity);
 
-    console.log(`完成：${result.nickname}，補簽 ${result.makeupCount} 次，今天簽到：${result.todaySigned ? "是" : "否"}`);
-
+    console.log(
+      `完成：${result.nickname}，補簽 ${result.makeupCount} 次，今天簽到：${result.todaySigned ? "是" : "否"}`
+    );
   } catch (err) {
     stats.failed++;
 
@@ -347,7 +390,7 @@ for (let i = 1; i < uids.length; i++) {
 `❌ Top Heroes 簽到失敗
 進度: ${i + 1}/${uids.length}
 UID: ${maskUid(uid)}
-Activity ID: ${activityId}
+Activity: ${activity.name} / ${activity.id}
 原因: ${err.message}`;
 
     stats.failures.push(msg);
@@ -361,13 +404,14 @@ Activity ID: ${activityId}
 
 const summary =
 `✅ Top Heroes 簽到完成
+活動: ${activity.name}
+Activity ID: ${activity.id}
 總數: ${stats.total}
 成功: ${stats.success}
 失敗: ${stats.failed}
 今日簽到: ${stats.today}
 補簽次數: ${stats.makeup}
-已完成/無需操作: ${stats.alreadyDone}
-Activity ID: ${activityId}`;
+已完成/無需操作: ${stats.alreadyDone}`;
 
 console.log("\n" + summary);
 await sendDiscord(summary);
