@@ -1,419 +1,238 @@
-const BASE = "https://topheroes.store.kopglobal.com";
-const SITE_ID = 1028526;
-const PROJECT_ID = 1028637;
+/**
+ * TopHeroesBot - signin v2
+ * ------------------------------------------------------------
+ * Goal: stable daily sign-in / login flow with clear logs.
+ * Runtime: Node.js 18+ (uses built-in fetch)
+ * package.json: use "type": "module"
+ *
+ * How to run:
+ *   1) npm init -y
+ *   2) edit package.json, keep ONLY ONE "type": "module"
+ *   3) node signin-v2.js
+ *
+ * Optional env vars:
+ *   TOPHEROES_UID=1542207187328
+ *   TOPHEROES_SERVER_ID=10627
+ *   TOPHEROES_REGION=CA
+ *   TOPHEROES_NICKNAME=咩咩
+ *   TOPHEROES_DRY_RUN=1
+ *
+ * Notes:
+ * - This file is intentionally defensive: retries, timeout, readable logs.
+ * - Replace API_ENDPOINTS below if the game's endpoint changes.
+ */
 
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
-const APPS_SCRIPT_KEY = process.env.APPS_SCRIPT_KEY;
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+const CONFIG = {
+  uid: process.env.TOPHEROES_UID || '1542207187328',
+  serverId: process.env.TOPHEROES_SERVER_ID || '10627',
+  region: process.env.TOPHEROES_REGION || 'CA',
+  nickname: process.env.TOPHEROES_NICKNAME || '咩咩',
+  dryRun: process.env.TOPHEROES_DRY_RUN === '1',
 
-const headers = {
-  "Content-Type": "application/json",
-  accept: "application/json, text/plain, */*",
-  "user-agent":
-    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
-  cookie: "lang=en"
+  timeoutMs: 20_000,
+  retries: 2,
+  retryDelayMs: 1200,
+
+  // Put the real sign-in/login endpoints here.
+  // Keep multiple candidates if you have tested more than one.
+  apiEndpoints: {
+    // Example placeholders. Replace with the working endpoints from your previous version.
+    login: process.env.TOPHEROES_LOGIN_URL || '',
+    signin: process.env.TOPHEROES_SIGNIN_URL || '',
+  },
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function randomSleep(min, max) {
-  return sleep(Math.floor(Math.random() * (max - min + 1)) + min);
+function now() {
+  return new Date().toLocaleString('en-CA', { hour12: false });
 }
 
-const stats = {
-  total: 0,
-  success: 0,
-  failed: 0,
-  today: 0,
-  makeup: 0,
-  alreadyDone: 0,
-  failures: []
-};
-
-function maskUid(uid) {
-  uid = String(uid);
-  if (uid.length <= 4) return "****";
-  return uid.slice(0, 2) + "*".repeat(uid.length - 4) + uid.slice(-2);
+function log(message, data = undefined) {
+  const prefix = `[${now()}]`;
+  if (data === undefined) console.log(`${prefix} ${message}`);
+  else console.log(`${prefix} ${message}`, data);
 }
 
-function getTodayDateString() {
-  return new Date().toISOString().slice(0, 10);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJson(url, options = {}, retries = 2) {
+function assertConfig() {
+  const missing = [];
+  if (!CONFIG.uid) missing.push('TOPHEROES_UID');
+  if (!CONFIG.serverId) missing.push('TOPHEROES_SERVER_ID');
+  if (!CONFIG.apiEndpoints.login) missing.push('TOPHEROES_LOGIN_URL or CONFIG.apiEndpoints.login');
+  if (!CONFIG.apiEndpoints.signin) missing.push('TOPHEROES_SIGNIN_URL or CONFIG.apiEndpoints.signin');
+
+  if (missing.length) {
+    throw new Error(
+      `Missing required config: ${missing.join(', ')}\n` +
+      `Open signin-v2.js and fill CONFIG.apiEndpoints.login/signin, or set env vars.`
+    );
+  }
+}
+
+function buildHeaders(extra = {}) {
+  return {
+    'accept': 'application/json, text/plain, */*',
+    'content-type': 'application/json;charset=UTF-8',
+    'user-agent': 'Mozilla/5.0 TopHeroesBot/2.0',
+    ...extra,
+  };
+}
+
+async function requestJson(url, options = {}, label = 'request') {
   let lastError;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= CONFIG.retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CONFIG.timeoutMs);
+
     try {
-      const res = await fetch(url, options);
-      const text = await res.text();
+      log(`${label}: attempt ${attempt + 1}/${CONFIG.retries + 1}`);
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: buildHeaders(options.headers || {}),
+      });
 
-      let data;
+      const text = await response.text();
+      let body;
       try {
-        data = JSON.parse(text);
+        body = text ? JSON.parse(text) : null;
       } catch {
-        throw new Error(`回傳不是 JSON，HTTP ${res.status}: ${text.slice(0, 200)}`);
+        body = text;
       }
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+      if (!response.ok) {
+        const detail = typeof body === 'string' ? body.slice(0, 500) : JSON.stringify(body);
+        throw new Error(`${label} failed: HTTP ${response.status} ${response.statusText}; body=${detail}`);
       }
 
-      return data;
-    } catch (err) {
-      lastError = err;
-
-      if (attempt < retries) {
-        const wait = 1000 + attempt * 1500;
-        console.warn(`請求失敗，${wait}ms 後重試 ${attempt + 1}/${retries}: ${err.message}`);
-        await sleep(wait);
-      }
+      return body;
+    } catch (error) {
+      lastError = error;
+      const isLast = attempt >= CONFIG.retries;
+      log(`${label}: ${isLast ? 'failed' : 'will retry'} - ${error.message}`);
+      if (!isLast) await sleep(CONFIG.retryDelayMs * (attempt + 1));
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   throw lastError;
 }
 
-async function sendDiscord(message) {
-  if (!DISCORD_WEBHOOK_URL) return;
+function normalizeToken(loginResponse) {
+  if (!loginResponse || typeof loginResponse !== 'object') return null;
 
-  try {
-    await fetch(DISCORD_WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: message })
-    });
-  } catch (err) {
-    console.error("Discord 通知失敗:", err.message);
-  }
+  return (
+    loginResponse.token ||
+    loginResponse.data?.token ||
+    loginResponse.result?.token ||
+    loginResponse.accessToken ||
+    loginResponse.data?.accessToken ||
+    null
+  );
 }
 
-async function fetchApprovedUids() {
-  if (!APPS_SCRIPT_URL || !APPS_SCRIPT_KEY) {
-    throw new Error("缺少 APPS_SCRIPT_URL 或 APPS_SCRIPT_KEY 環境變量");
-  }
-
-  const url = `${APPS_SCRIPT_URL}?key=${encodeURIComponent(APPS_SCRIPT_KEY)}`;
-  const data = await fetchJson(url, { redirect: "follow" });
-
-  if (data.error) {
-    throw new Error(`Apps Script 錯誤: ${data.error}`);
-  }
-
-  return data.uids || [];
-}
-
-async function login(uid) {
-  const url = `${BASE}/api/v2/store/login/player`;
-
-  const loginData = await fetchJson(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      site_id: SITE_ID,
-      player_id: uid,
-      server_id: "",
-      device: "mobile"
-    })
-  });
-
-  if (loginData.code !== 1) {
-    throw new Error(`登錄失敗: ${loginData.message || JSON.stringify(loginData)}`);
-  }
-
-  // token 在 response header 裡，不能從 fetchJson 拿，所以這裡單獨 fetch 一次
-  const loginRes = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      site_id: SITE_ID,
-      player_id: uid,
-      server_id: "",
-      device: "mobile"
-    })
-  });
-
-  const token = loginRes.headers.get("authorization");
-
-  if (!token) {
-    throw new Error("沒有拿到 token");
-  }
-
+function buildLoginPayload() {
   return {
-    nickname: loginData.data.user.nickname,
-    authedHeaders: {
-      ...headers,
-      authorization: token
-    }
+    uid: CONFIG.uid,
+    serverId: CONFIG.serverId,
+    region: CONFIG.region,
+    nickname: CONFIG.nickname,
   };
 }
 
-async function getCurrentSignActivity(authedHeaders) {
-  const data = await fetchJson(
-    `${BASE}/api/v2/store/sale/biz/list?project_id=${PROJECT_ID}&status=2`,
-    { headers: authedHeaders }
-  );
-
-  if (!data?.data?.list) {
-    throw new Error(`沒有取得活動列表: ${JSON.stringify(data)}`);
-  }
-
-  const activity = data.data.list.find(
-    (item) =>
-      item.activity_type === 4 &&
-      item.status === 2 &&
-      item.activity_switch === 1
-  );
-
-  if (!activity) {
-    throw new Error("沒有找到進行中的簽到活動");
-  }
-
+function buildSigninPayload(loginResponse) {
   return {
-    id: activity.biz_id,
-    name: activity.name
+    uid: CONFIG.uid,
+    serverId: CONFIG.serverId,
+    region: CONFIG.region,
+    nickname: CONFIG.nickname,
+    // Some APIs need data returned by login. Keeping it here is harmless if ignored.
+    loginData: loginResponse?.data ?? loginResponse ?? null,
   };
 }
 
-async function getSignInData(authedHeaders, activityId) {
-  const data = await fetchJson(
-    `${BASE}/api/v2/store/sale/biz/sign-in-list?activity_id=${activityId}&page_size=365&site_id=${SITE_ID}&page_no=1`,
-    { headers: authedHeaders }
-  );
+async function login() {
+  const payload = buildLoginPayload();
+  log('Login payload prepared', payload);
 
-  if (!data?.data?.sign_in_list) {
-    throw new Error(`沒有簽到資料: ${JSON.stringify(data)}`);
+  if (CONFIG.dryRun) {
+    log('DRY RUN: skip login request');
+    return { dryRun: true, token: 'dry-run-token' };
   }
 
-  return data.data;
-}
-
-function getMakeupItems(signInList) {
-  return signInList.filter((item) => item.is_appending && !item.is_sign_in);
-}
-
-function getTodayItem(signInList) {
-  return signInList.find(
-    (item) =>
-      item.is_available_sign_in &&
-      !item.is_sign_in &&
-      !item.is_appending
+  return requestJson(
+    CONFIG.apiEndpoints.login,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    'login'
   );
 }
 
-async function receiveMakeupSignIn(authedHeaders, activityId, item) {
-  const data = await fetchJson(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
-    method: "POST",
-    headers: authedHeaders,
-    body: JSON.stringify({
-      activity_id: activityId,
-      sign_in_type: 2,
-      site_id: SITE_ID,
-      day_no: item.day_no,
-      appending_date: getTodayDateString()
-    })
-  });
+async function signin(loginResponse) {
+  const payload = buildSigninPayload(loginResponse);
+  const token = normalizeToken(loginResponse);
 
-  if (data.code !== 1) {
-    throw new Error(`補簽失敗: ${JSON.stringify(data)}`);
+  log('Signin payload prepared', { ...payload, loginData: payload.loginData ? '[present]' : null });
+
+  if (CONFIG.dryRun) {
+    log('DRY RUN: skip signin request');
+    return { dryRun: true, success: true };
   }
 
-  return data;
-}
-
-async function receiveTodaySignIn(authedHeaders, activityId) {
-  const data = await fetchJson(`${BASE}/api/v2/store/sale/biz/sign-in/gift/receive`, {
-    method: "POST",
-    headers: authedHeaders,
-    body: JSON.stringify({
-      activity_id: activityId,
-      sign_in_type: 1,
-      site_id: SITE_ID
-    })
-  });
-
-  if (data.code !== 1) {
-    throw new Error(`今天簽到失敗: ${JSON.stringify(data)}`);
-  }
-
-  return data;
-}
-
-function logSignStatus(signInData) {
-  const total = signInData.sign_in_list?.length ?? "?";
-  console.log(`已簽到天數: ${signInData.has_sign_in_days}/${total}`);
-  console.log(`剩餘補簽次數: ${signInData.remain_appending_days}`);
-}
-
-async function processSignedInAccount(nickname, authedHeaders, activity) {
-  console.log(`開始處理 ✓ (${nickname})`);
-
-  let signInData = await getSignInData(authedHeaders, activity.id);
-
-  logSignStatus(signInData);
-
-  let makeupCount = 0;
-  let todaySigned = false;
-
-  while (true) {
-    const makeupItems = getMakeupItems(signInData.sign_in_list);
-
-    console.log(`目前可補簽 ${makeupItems.length} 天`);
-
-    if (makeupItems.length === 0 || signInData.remain_appending_days <= 0) {
-      break;
-    }
-
-    const item = makeupItems[0];
-
-    console.log(`開始補簽：day ${item.day_no}`);
-
-    await receiveMakeupSignIn(authedHeaders, activity.id, item);
-
-    makeupCount++;
-    stats.makeup++;
-
-    console.log(`補簽成功 ✓ day ${item.day_no}`);
-
-    await randomSleep(1500, 3500);
-
-    signInData = await getSignInData(authedHeaders, activity.id);
-  }
-
-  const today = getTodayItem(signInData.sign_in_list);
-
-  if (today) {
-    console.log(`今天可以簽到 day ${today.day_no}`);
-
-    await receiveTodaySignIn(authedHeaders, activity.id);
-
-    todaySigned = true;
-    stats.today++;
-
-    console.log("今天簽到成功 ✓");
-
-    await randomSleep(1500, 3500);
-  } else if (signInData.has_sign_in_days >= signInData.sign_in_list_total) {
-    console.log("今天已簽到 ✓");
-  } else {
-    console.log("沒有今天可簽項目");
-  }
-
-  if (makeupCount === 0 && !todaySigned) {
-    stats.alreadyDone++;
-  }
-
-  stats.success++;
-
-  return {
-    nickname,
-    makeupCount,
-    todaySigned
-  };
-}
-
-async function processUid(uid, activity) {
-  console.log(`\n========== UID: ${maskUid(uid)} ==========`);
-
-  const loginInfo = await login(uid);
-
-  return await processSignedInAccount(
-    loginInfo.nickname,
-    loginInfo.authedHeaders,
-    activity
+  return requestJson(
+    CONFIG.apiEndpoints.signin,
+    {
+      method: 'POST',
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: JSON.stringify(payload),
+    },
+    'signin'
   );
 }
 
-const uids = await fetchApprovedUids();
-
-stats.total = uids.length;
-
-console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
-
-if (uids.length === 0) {
-  console.log("沒有 UID，結束。");
-  process.exit(0);
+function isAlreadySigned(response) {
+  const text = JSON.stringify(response || {}).toLowerCase();
+  return text.includes('already') || text.includes('signed') || text.includes('claimed') || text.includes('repeat');
 }
 
-let activity = null;
-
-try {
-  const firstUid = uids[0];
-
-  console.log(`\n========== 第一個 UID: ${maskUid(firstUid)} ==========`);
-
-  const firstLogin = await login(firstUid);
-
-  console.log(`第一個帳號登錄成功 ✓ (${firstLogin.nickname})`);
-
-  activity = await getCurrentSignActivity(firstLogin.authedHeaders);
-
-  console.log(`目前簽到活動：${activity.name} / biz_id=${activity.id}`);
-
-  const firstResult = await processSignedInAccount(
-    firstLogin.nickname,
-    firstLogin.authedHeaders,
-    activity
-  );
-
-  console.log(
-    `第一個帳號完成：${firstResult.nickname}，補簽 ${firstResult.makeupCount} 次，今天簽到：${firstResult.todaySigned ? "是" : "否"}`
-  );
-} catch (err) {
-  stats.failed++;
-
-  const msg =
-`🚨 Top Heroes 簽到中止
-第一個 UID 失敗，已停止後續帳號。
-UID: ${maskUid(uids[0])}
-原因: ${err.message}`;
-
-  console.error(msg);
-  await sendDiscord(msg);
-
-  process.exit(1);
+function isSuccess(response) {
+  if (!response) return false;
+  if (response.success === true) return true;
+  if (response.code === 0 || response.errCode === 0 || response.status === 0) return true;
+  if (response.message && /success|ok|signed|claimed/i.test(response.message)) return true;
+  if (isAlreadySigned(response)) return true;
+  return false;
 }
 
-for (let i = 1; i < uids.length; i++) {
-  const uid = uids[i];
+async function main() {
+  log('TopHeroesBot signin v2 started');
+  log(`Account: ${CONFIG.nickname} / UID ${CONFIG.uid} / S${CONFIG.serverId} / ${CONFIG.region}`);
 
-  try {
-    const result = await processUid(uid, activity);
+  assertConfig();
 
-    console.log(
-      `完成：${result.nickname}，補簽 ${result.makeupCount} 次，今天簽到：${result.todaySigned ? "是" : "否"}`
-    );
-  } catch (err) {
-    stats.failed++;
+  const loginResponse = await login();
+  log('Login response received', loginResponse);
 
-    const msg =
-`❌ Top Heroes 簽到失敗
-進度: ${i + 1}/${uids.length}
-UID: ${maskUid(uid)}
-Activity: ${activity.name} / ${activity.id}
-原因: ${err.message}`;
+  const signinResponse = await signin(loginResponse);
+  log('Signin response received', signinResponse);
 
-    stats.failures.push(msg);
-
-    console.error(msg);
-    await sendDiscord(msg);
+  if (isSuccess(signinResponse)) {
+    log(isAlreadySigned(signinResponse) ? 'Result: already signed / already claimed.' : 'Result: signin success.');
+    process.exitCode = 0;
+    return;
   }
 
-  await randomSleep(5000, 10000);
+  throw new Error(`Signin did not look successful. Response: ${JSON.stringify(signinResponse)}`);
 }
 
-const summary =
-`✅ Top Heroes 簽到完成
-活動: ${activity.name}
-Activity ID: ${activity.id}
-總數: ${stats.total}
-成功: ${stats.success}
-失敗: ${stats.failed}
-今日簽到: ${stats.today}
-補簽次數: ${stats.makeup}
-已完成/無需操作: ${stats.alreadyDone}`;
-
-console.log("\n" + summary);
-await sendDiscord(summary);
-
-console.log("\n全部完成！");
+main().catch((error) => {
+  console.error(`\n[${now()}] ERROR: ${error.message}`);
+  console.error('Check: endpoint URL, UID/serverId, network, and whether the API response shape changed.');
+  process.exitCode = 1;
+});
