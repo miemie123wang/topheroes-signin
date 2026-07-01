@@ -61,7 +61,9 @@ function getMakeupItems(signInList) {
   return signInList.filter(item =>
     item.is_available_sign_in &&
     !item.is_sign_in &&
-    item.is_appending
+    item.is_appending &&
+    item.day_no &&
+    item.appending_date
   );
 }
 
@@ -162,17 +164,20 @@ async function signIn(uid) {
 
   console.log("Step 3: 取得簽到列表 ✓");
 
-  // Step 4: 先檢查還有幾天可以補簽
-  let makeupItems = getMakeupItems(signInList);
+  // 先補簽：每補一次，都重新查一次列表
+  while (true) {
+    const makeupItems = getMakeupItems(signInList);
 
-  console.log(`目前可補簽 ${makeupItems.length} 天`);
+    console.log(`目前可補簽 ${makeupItems.length} 天`);
 
-  for (const item of makeupItems) {
-    console.log(`可補簽：day ${item.day_no}, date ${item.appending_date}`);
-  }
+    if (makeupItems.length === 0) {
+      break;
+    }
 
-  // Step 5: 逐天補簽，每補一次重新查列表
-  while (makeupItems.length > 0) {
+    for (const item of makeupItems) {
+      console.log(`可補簽：day ${item.day_no}, date ${item.appending_date}`);
+    }
+
     const item = makeupItems[0];
 
     console.log(`開始補簽：day ${item.day_no}, date ${item.appending_date}`);
@@ -191,13 +196,9 @@ async function signIn(uid) {
     signInList = await getSignInList(authedHeaders);
 
     if (!signInList) return;
-
-    makeupItems = getMakeupItems(signInList);
-
-    console.log(`補簽後，剩餘可補簽 ${makeupItems.length} 天`);
   }
 
-  // Step 6: 補簽完成後，再簽今天
+  // 再簽今天
   signInList = await getSignInList(authedHeaders);
 
   if (!signInList) return;
@@ -206,40 +207,35 @@ async function signIn(uid) {
 
   if (!today) {
     console.log("今天已經簽到，或沒有今天可簽項目。");
-    return;
-  }
-
-  console.log(`Step 6: 今天可以簽到 day ${today.day_no}`);
-
-  const receiveData = await receiveTodaySignIn(authedHeaders);
-
-  if (receiveData.code === 1) {
-    console.log("今天簽到成功 ✓");
   } else {
-    console.error("今天簽到失敗:", receiveData);
-    return;
+    console.log(`今天可以簽到 day ${today.day_no}`);
+
+    const receiveData = await receiveTodaySignIn(authedHeaders);
+
+    if (receiveData.code === 1) {
+      console.log("今天簽到成功 ✓");
+    } else {
+      console.error("今天簽到失敗:", receiveData);
+      return;
+    }
+
+    await sleep(3000);
   }
 
-  await sleep(3000);
-
-  // Step 7: 最後再查一次
+  // 最後再檢查一次
   signInList = await getSignInList(authedHeaders);
 
   if (!signInList) return;
 
-  makeupItems = getMakeupItems(signInList);
+  const remainingMakeupItems = getMakeupItems(signInList);
 
-  if (makeupItems.length === 0) {
+  if (remainingMakeupItems.length === 0) {
     console.log("最後檢查：沒有剩餘可補簽項目 ✓");
   } else {
-    console.log(`最後檢查：仍有 ${makeupItems.length} 天可補簽`);
-    for (const item of makeupItems) {
-      console.log(`剩餘可補簽：day ${item.day_no}, date ${item.appending_date}`);
-    }
+    console.log(`最後檢查：仍有 ${remainingMakeupItems.length} 天可補簽`);
   }
 }
 
-// 從 Google Sheet 獲取 UID
 const uids = await fetchApprovedUids();
 
 console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
