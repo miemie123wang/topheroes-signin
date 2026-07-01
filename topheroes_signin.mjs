@@ -453,6 +453,8 @@ UID: ${maskUid(uids[0])}
     process.exit(1);
   }
 
+  await randomSleep(5000, 10000);
+
   for (let i = 1; i < uids.length; i++) {
     const uid = uids[i];
 
