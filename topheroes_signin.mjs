@@ -124,29 +124,6 @@ async function fetchJsonWithHeaders(url, options = {}) {
   return { data, res };
 }
 
-async function preCheckPlayer(uid) {
-  const url =
-    `${BASE}/api/v2/store/player-info` +
-    `?project_id=${PROJECT_ID}` +
-    `&player_id=${encodeURIComponent(uid)}` +
-    `&site_id=${SITE_ID}`;
-
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers
-    });
-
-    const text = await res.text();
-
-    if (!res.ok) {
-      console.warn(`player-info 預檢失敗 HTTP ${res.status}: ${text.slice(0, 200)}`);
-    }
-  } catch (err) {
-    console.warn(`player-info 預檢異常: ${err.message}`);
-  }
-}
-
 async function sendDiscord(message) {
   if (!DISCORD_WEBHOOK_URL) return;
 
@@ -208,14 +185,33 @@ async function loginOnce(uid) {
   };
 }
 
+async function preCheckPlayer(uid) {
+  const url =
+    `${BASE}/api/v2/store/player-info` +
+    `?project_id=${PROJECT_ID}` +
+    `&player_id=${encodeURIComponent(uid)}` +
+    `&site_id=${SITE_ID}`;
+
+  try {
+    await fetch(url, {
+      method: "GET",
+      headers
+    });
+  } catch {
+    // player-info 失败不影响 login
+  }
+}
+
 async function login(uid, maxRetries = 6) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // 登录前预热
       await preCheckPlayer(uid);
 
-      await sleep(1000 + Math.floor(Math.random() * 2000));
+      // 模拟真人操作
+      await randomSleep(1000, 3000);
 
       const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
         method: "POST",
@@ -231,14 +227,15 @@ async function login(uid, maxRetries = 6) {
       const text = await loginRes.text();
 
       if (!loginRes.ok) {
-        throw new Error(`HTTP ${loginRes.status}: ${text.slice(0, 300)}`);
+        throw new Error(`HTTP ${loginRes.status}: ${text}`);
       }
 
       let loginData;
+
       try {
         loginData = JSON.parse(text);
       } catch {
-        throw new Error(`返回不是 JSON：${text.slice(0, 300)}`);
+        throw new Error(`返回不是 JSON：${text}`);
       }
 
       if (loginData.code !== 1) {
@@ -259,16 +256,17 @@ async function login(uid, maxRetries = 6) {
           authorization: token
         }
       };
+
     } catch (err) {
       lastError = err;
 
       if (attempt < maxRetries) {
-        const wait = 5000 + Math.floor(Math.random() * 10000);
+        const wait = 15000 + Math.floor(Math.random() * 20000);
 
         console.warn(
           `[login ${attempt}/${maxRetries}] ${maskUid(uid)} 失敗：${err.message}`
         );
-        console.warn(`等待 ${wait} ms 後重試...`);
+        console.warn(`等待 ${Math.round(wait / 1000)} 秒後重試...`);
 
         await sleep(wait);
       }
@@ -279,7 +277,6 @@ async function login(uid, maxRetries = 6) {
     `登入失敗（已重試 ${maxRetries} 次）：${lastError.message}`
   );
 }
-
 async function getCurrentSignActivity(authedHeaders) {
   const data = await fetchJson(
     `${BASE}/api/v2/store/sale/biz/list?project_id=${PROJECT_ID}&status=2`,
