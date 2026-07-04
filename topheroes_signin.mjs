@@ -125,18 +125,25 @@ async function fetchJsonWithHeaders(url, options = {}) {
 }
 
 async function preCheckPlayer(uid) {
-  const url = `${BASE}/api/v2/store/player-info?project_id=${PROJECT_ID}&player_id=${encodeURIComponent(uid)}&site_id=${SITE_ID}`;
+  const url =
+    `${BASE}/api/v2/store/player-info` +
+    `?project_id=${PROJECT_ID}` +
+    `&player_id=${encodeURIComponent(uid)}` +
+    `&site_id=${SITE_ID}`;
 
-  const res = await fetch(url, {
-    method: "GET",
-    headers
-  });
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers
+    });
 
-  // 不强制要求成功，只当作登录前预热
-  const text = await res.text();
+    const text = await res.text();
 
-  if (!res.ok) {
-    console.warn(`player-info 預檢失敗 HTTP ${res.status}: ${text.slice(0, 200)}`);
+    if (!res.ok) {
+      console.warn(`player-info 預檢失敗 HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.warn(`player-info 預檢異常: ${err.message}`);
   }
 }
 
@@ -201,14 +208,14 @@ async function loginOnce(uid) {
   };
 }
 
-async function login(uid, maxRetries = 3) {
+async function login(uid, maxRetries = 6) {
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // 模拟网页登录前的 player-info 预检查
       await preCheckPlayer(uid);
-      await sleep(800 + Math.floor(Math.random() * 700));
+
+      await sleep(1000 + Math.floor(Math.random() * 2000));
 
       const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
         method: "POST",
@@ -224,14 +231,14 @@ async function login(uid, maxRetries = 3) {
       const text = await loginRes.text();
 
       if (!loginRes.ok) {
-        throw new Error(`HTTP ${loginRes.status}: ${text}`);
+        throw new Error(`HTTP ${loginRes.status}: ${text.slice(0, 300)}`);
       }
 
       let loginData;
       try {
         loginData = JSON.parse(text);
       } catch {
-        throw new Error(`返回不是 JSON：${text}`);
+        throw new Error(`返回不是 JSON：${text.slice(0, 300)}`);
       }
 
       if (loginData.code !== 1) {
@@ -252,12 +259,11 @@ async function login(uid, maxRetries = 3) {
           authorization: token
         }
       };
-
     } catch (err) {
       lastError = err;
 
       if (attempt < maxRetries) {
-        const wait = 3000 + Math.floor(Math.random() * 5000);
+        const wait = 5000 + Math.floor(Math.random() * 10000);
 
         console.warn(
           `[login ${attempt}/${maxRetries}] ${maskUid(uid)} 失敗：${err.message}`
