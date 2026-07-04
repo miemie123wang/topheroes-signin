@@ -124,6 +124,13 @@ async function fetchJsonWithHeaders(url, options = {}) {
   return { data, res };
 }
 
+async function preCheckPlayer(uid) {
+  await requestJson(
+    `${BASE}/api/v2/store/player-info?project_id=${PROJECT_ID}&player_id=${uid}&site_id=${SITE_ID}`,
+    { headers }
+  );
+}
+
 async function sendDiscord(message) {
   if (!DISCORD_WEBHOOK_URL) return;
 
@@ -226,6 +233,7 @@ async function login(uid, maxRetries = 3) {
       lastError = err;
 
       if (attempt < maxRetries) {
+        await preCheckPlayer(uid);
         const wait = 3000 + Math.floor(Math.random() * 5000);
         console.warn(`login 失敗，${wait}ms 後重試 ${attempt}/${maxRetries}: ${err.message}`);
         await sleep(wait);
