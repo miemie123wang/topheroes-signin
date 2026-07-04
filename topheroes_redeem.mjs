@@ -21,6 +21,22 @@ function maskUid(uid) {
   return uid.slice(0, 2) + "*".repeat(uid.length - 4) + uid.slice(-2);
 }
 
+async function preCheckPlayer(uid) {
+  const url = `${BASE}/api/v2/store/player-info?project_id=${PROJECT_ID}&player_id=${encodeURIComponent(uid)}&site_id=${SITE_ID}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers
+  });
+
+  // 不强制要求成功，只当作登录前预热
+  const text = await res.text();
+
+  if (!res.ok) {
+    console.warn(`player-info 預檢失敗 HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+}
+
 async function fetchApprovedUids() {
   if (!APPS_SCRIPT_URL || !APPS_SCRIPT_KEY) {
     throw new Error("缺少 APPS_SCRIPT_URL 或 APPS_SCRIPT_KEY 環境變量");
@@ -72,6 +88,7 @@ async function redeemForUid(uid, code) {
   await sleep(1000);
 
   // Step 2: login
+  await preCheckPlayer(uid);
   const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
     method: "POST",
     headers,
