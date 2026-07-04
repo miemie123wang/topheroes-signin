@@ -125,10 +125,19 @@ async function fetchJsonWithHeaders(url, options = {}) {
 }
 
 async function preCheckPlayer(uid) {
-  await requestJson(
-    `${BASE}/api/v2/store/player-info?project_id=${PROJECT_ID}&player_id=${uid}&site_id=${SITE_ID}`,
-    { headers }
-  );
+  const url = `${BASE}/api/v2/store/player-info?project_id=${PROJECT_ID}&player_id=${encodeURIComponent(uid)}&site_id=${SITE_ID}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers
+  });
+
+  // 不强制要求成功，只当作登录前预热
+  const text = await res.text();
+
+  if (!res.ok) {
+    console.warn(`player-info 預檢失敗 HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
 }
 
 async function sendDiscord(message) {
@@ -197,6 +206,10 @@ async function login(uid, maxRetries = 3) {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // 模拟网页登录前的 player-info 预检查
+      await preCheckPlayer(uid);
+      await sleep(800 + Math.floor(Math.random() * 700));
+
       const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
         method: "POST",
         headers,
@@ -204,7 +217,7 @@ async function login(uid, maxRetries = 3) {
           site_id: SITE_ID,
           player_id: uid,
           server_id: "",
-          device: "mobile"
+          device: "pc"
         })
       });
 
