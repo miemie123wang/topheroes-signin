@@ -13,6 +13,7 @@ const CHANNEL_IDS = [
   "1343771733173473311",
   "1112595962515427338"
 ];
+
 const LAST_MSG_FILE = "last_message_id.txt";
 
 const gameHeaders = {
@@ -29,7 +30,11 @@ const discordHeaders = {
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+const randomSleep = (min, max) =>
+  sleep(min + Math.floor(Math.random() * (max - min)));
+
 function maskUid(uid) {
+  uid = String(uid);
   if (uid.length <= 4) return "****";
   return uid.slice(0, 2) + "*".repeat(uid.length - 4) + uid.slice(-2);
 }
@@ -38,15 +43,20 @@ async function fetchApprovedUids() {
   if (!APPS_SCRIPT_URL || !APPS_SCRIPT_KEY) {
     throw new Error("缺少 APPS_SCRIPT_URL 或 APPS_SCRIPT_KEY 環境變量");
   }
+
   const url = `${APPS_SCRIPT_URL}?key=${encodeURIComponent(APPS_SCRIPT_KEY)}`;
   const res = await fetch(url, { redirect: "follow" });
+
   if (!res.ok) {
     throw new Error(`Apps Script 請求失敗: ${res.status}`);
   }
+
   const data = await res.json();
+
   if (data.error) {
     throw new Error(`Apps Script 錯誤: ${data.error}`);
   }
+
   return data.uids || [];
 }
 
@@ -61,6 +71,7 @@ function loadLastMessageId() {
       return {};
     }
   }
+
   return {};
 }
 
@@ -69,11 +80,8 @@ function saveLastMessageId(ids) {
 }
 
 function extractGiftCode(content) {
-  // Match code in backticks
   const backtickMatch = content.match(/`([A-Za-z0-9]{6,20})`/);
-  // Match code on a new line after a label
   const labelMatch = content.match(/(?:giftcode|redeem\s*code)[^\n]*\n+([A-Za-z0-9]{6,20})/i);
-  // Match code in a standalone block (Discord code block formatting)
   const blockMatch = content.match(/^([A-Za-z0-9]{6,20})$/m);
 
   const code = backtickMatch?.[1] || labelMatch?.[1] || blockMatch?.[1];
@@ -88,11 +96,13 @@ async function sendNotification(content) {
     console.error("缺少 DISCORD_WEBHOOK 環境變量");
     return;
   }
+
   const res = await fetch(DISCORD_WEBHOOK, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content })
   });
+
   if (!res.ok) {
     console.error("Webhook 發送失敗:", await res.text());
   }
@@ -105,6 +115,7 @@ async function checkDiscordChannel(lastMessageIds) {
   for (const channelId of CHANNEL_IDS) {
     const lastId = lastMessageIds[channelId];
     const params = new URLSearchParams({ limit: "10" });
+
     if (lastId) params.append("after", lastId);
 
     const res = await fetch(
@@ -118,13 +129,16 @@ async function checkDiscordChannel(lastMessageIds) {
     }
 
     const messages = await res.json();
+
     if (!messages.length) continue;
 
     messages.sort((a, b) => (BigInt(a.id) > BigInt(b.id) ? 1 : -1));
 
     for (const msg of messages) {
-  console.log("原始消息:", JSON.stringify(msg.content)); // 加这行
+      console.log("原始消息:", JSON.stringify(msg.content));
+
       const code = extractGiftCode(msg.content);
+
       if (code && !allCodes.includes(code)) {
         console.log(`頻道 ${channelId} 發現兌換碼: ${code}`);
         allCodes.push(code);
@@ -135,6 +149,94 @@ async function checkDiscordChannel(lastMessageIds) {
   }
 
   return { newLastIds, codes: allCodes };
+}
+
+async function preCheckPlayer(uid) {
+  const url =
+    `${BASE}/api/v2/store/player-info` +
+    `?project_id=${PROJECT_ID}` +
+    `&player_id=${encodeURIComponent(uid)}` +
+    `&site_id=${SITE_ID}`;
+
+  try {
+    await fetch(url, {
+      method: "GET",
+      headers: gameHeaders
+    });
+  } catch {
+    // player-info 失败不影响 login
+  }
+}
+
+async function login(uid, maxRetries = 6) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await preCheckPlayer(uid);
+
+      await randomSleep(1000, 3000);
+
+      const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
+        method: "POST",
+        headers: gameHeaders,
+        body: JSON.stringify({
+          site_id: SITE_ID,
+          player_id: uid,
+          server_id: "",
+          device: "mobile"
+        })
+      });
+
+      const text = await loginRes.text();
+
+      if (!loginRes.ok) {
+        throw new Error(`HTTP ${loginRes.status}: ${text}`);
+      }
+
+      let loginData;
+
+      try {
+        loginData = JSON.parse(text);
+      } catch {
+        throw new Error(`返回不是 JSON：${text}`);
+      }
+
+      if (loginData.code !== 1) {
+        throw new Error(loginData.message || JSON.stringify(loginData));
+      }
+
+      const nickname = loginData?.data?.user?.nickname || "(unknown)";
+      const token = loginRes.headers.get("authorization");
+
+      if (!token) {
+        throw new Error(`沒有拿到 token (${nickname})`);
+      }
+
+      return {
+        nickname,
+        authedHeaders: {
+          ...gameHeaders,
+          authorization: token
+        }
+      };
+    } catch (err) {
+      lastError = err;
+
+      if (attempt < maxRetries) {
+        const wait = 15000 + Math.floor(Math.random() * 20000);
+
+        console.warn(
+          `[login ${attempt}/${maxRetries}] ${maskUid(uid)} 失敗：${err.message}`
+        );
+        console.warn(`等待 ${Math.round(wait / 1000)} 秒後重試...`);
+
+        await sleep(wait);
+      }
+    }
+  }
+
+  throw new Error(`登入失敗（已重試 ${maxRetries} 次）：${lastError.message}`);
 }
 
 async function redeemForUid(uid, code) {
@@ -153,45 +255,43 @@ async function redeemForUid(uid, code) {
       platform: "android"
     })
   });
-  await sleep(1000);
 
-  const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
-    method: "POST",
-    headers: gameHeaders,
-    body: JSON.stringify({
-      site_id: SITE_ID,
-      player_id: uid,
-      server_id: "",
-      device: "mobile"
-    })
-  });
-  const loginData = await loginRes.json();
-  if (loginData.code !== 1) {
-    console.error(`  登錄失敗: ${loginData.message}`);
-    return false;
-  }
-  const token = loginRes.headers.get("authorization");
-  if (!token) {
-    console.error("  沒有拿到 token");
-    return false;
-  }
-  console.log(`  登錄成功 ✓ (${loginData.data.user.nickname})`);
-  await sleep(1000);
+  try {
+    const { nickname, authedHeaders } = await login(uid);
 
-  const redeemRes = await fetch(`${BASE}/api/v2/store/redemption/redeem`, {
-    method: "POST",
-    headers: { ...gameHeaders, authorization: token },
-    body: JSON.stringify({
-      project_id: PROJECT_ID,
-      redemption_code: code
-    })
-  });
-  const redeemData = await redeemRes.json();
-  if (redeemData.code === 1) {
-    console.log(`  兌換成功 ✓`);
-    return true;
-  } else {
-    console.error(`  兌換失敗: ${redeemData.message}`);
+    console.log(`  登錄成功 ✓ (${nickname})`);
+
+    await randomSleep(1000, 2500);
+
+    const redeemRes = await fetch(`${BASE}/api/v2/store/redemption/redeem`, {
+      method: "POST",
+      headers: authedHeaders,
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        redemption_code: code
+      })
+    });
+
+    const redeemText = await redeemRes.text();
+
+    let redeemData;
+
+    try {
+      redeemData = JSON.parse(redeemText);
+    } catch {
+      console.error(`  兌換返回不是 JSON: ${redeemText}`);
+      return false;
+    }
+
+    if (redeemData.code === 1) {
+      console.log(`  兌換成功 ✓`);
+      return true;
+    }
+
+    console.error(`  兌換失敗: ${redeemData.message || redeemText}`);
+    return false;
+  } catch (err) {
+    console.error(`  登錄/兌換流程失敗: ${err.message}`);
     return false;
   }
 }
@@ -199,24 +299,26 @@ async function redeemForUid(uid, code) {
 async function redeemAllUids(code, uids) {
   console.log(`開始為 ${uids.length} 個帳號兌換: ${code}`);
 
-  // Notify that a code was found, pending verification
   await sendNotification(`🎁 發現兌換碼：\`${code}\`\n正在嘗試網頁兌換，請稍候...`);
 
-  // Try first account to determine if it's a web code
   const firstSuccess = await redeemForUid(uids[0], code);
+
   if (!firstSuccess) {
     await sendNotification(`🎮 \`${code}\` 網頁兌換失敗，請手動在遊戲內兌換！`);
     return;
   }
 
-  // First succeeded, continue with the rest
   for (const uid of uids.slice(1)) {
-    await sleep(3000 + Math.random() * 3000);
+    await randomSleep(3000, 6000);
     await redeemForUid(uid, code);
   }
 
-  const time = new Date().toLocaleString("zh-CN", { timeZone: "America/Toronto" });
+  const time = new Date().toLocaleString("zh-CN", {
+    timeZone: "America/Toronto"
+  });
+
   await sendNotification(`✅ 網頁碼兌換完成！\n碼：\`${code}\`\n時間：${time}`);
+
   console.log("全部兌換完成 ✓");
 }
 
@@ -227,17 +329,20 @@ async function main() {
   }
 
   console.log("檢查 Discord 頻道...");
+
   let lastMessageIds = loadLastMessageId();
 
-  // Initialize if first run
   let needsSave = false;
+
   for (const channelId of CHANNEL_IDS) {
     if (!lastMessageIds[channelId]) {
       const res = await fetch(
         `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
         { headers: discordHeaders }
       );
+
       const messages = await res.json();
+
       if (messages.length) {
         lastMessageIds[channelId] = messages[0].id;
         console.log(`頻道 ${channelId} 初始化完成`);
@@ -253,6 +358,7 @@ async function main() {
   }
 
   const { newLastIds, codes } = await checkDiscordChannel(lastMessageIds);
+
   saveLastMessageId(newLastIds);
 
   if (!codes.length) {
@@ -261,11 +367,14 @@ async function main() {
   }
 
   console.log("發現新 code，從 Google Sheet 獲取已 Approved 的 UID...");
+
   const uids = await fetchApprovedUids();
+
   if (uids.length === 0) {
     console.log("沒有已 Approved 的 UID，結束");
     return;
   }
+
   console.log(`找到 ${uids.length} 個已 Approved 的帳號`);
 
   for (const code of codes) {
@@ -273,4 +382,7 @@ async function main() {
   }
 }
 
-main();
+main().catch(err => {
+  console.error("🚨 程式中止:", err);
+  process.exit(1);
+});
