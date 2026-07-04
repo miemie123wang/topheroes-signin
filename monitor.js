@@ -8,6 +8,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 const APPS_SCRIPT_KEY = process.env.APPS_SCRIPT_KEY;
+const MANUAL_CODE = process.env.MANUAL_CODE;
 
 const CHANNEL_IDS = [
   "1343771733173473311",
@@ -322,51 +323,68 @@ async function redeemAllUids(code, uids) {
   console.log("全部兌換完成 ✓");
 }
 
+function getManualCodes() {
+  if (!MANUAL_CODE || !MANUAL_CODE.trim()) return [];
+
+  return MANUAL_CODE
+    .split(/[\s,，;；]+/)
+    .map(code => code.trim())
+    .filter(Boolean);
+}
+
 async function main() {
-  if (!DISCORD_TOKEN) {
-    console.error("缺少 DISCORD_TOKEN 環境變量");
+  if (!DISCORD_TOKEN && !MANUAL_CODE) {
+    console.error("缺少 DISCORD_TOKEN 環境變量；如需手動兌換，請提供 MANUAL_CODE");
     process.exit(1);
   }
 
-  console.log("檢查 Discord 頻道...");
+  let codes = getManualCodes();
 
-  let lastMessageIds = loadLastMessageId();
+  if (codes.length > 0) {
+    console.log(`使用手動輸入兌換碼: ${codes.join(", ")}`);
+  } else {
+    console.log("檢查 Discord 頻道...");
 
-  let needsSave = false;
+    let lastMessageIds = loadLastMessageId();
 
-  for (const channelId of CHANNEL_IDS) {
-    if (!lastMessageIds[channelId]) {
-      const res = await fetch(
-        `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
-        { headers: discordHeaders }
-      );
+    let needsSave = false;
 
-      const messages = await res.json();
+    for (const channelId of CHANNEL_IDS) {
+      if (!lastMessageIds[channelId]) {
+        const res = await fetch(
+          `https://discord.com/api/v10/channels/${channelId}/messages?limit=1`,
+          { headers: discordHeaders }
+        );
 
-      if (messages.length) {
-        lastMessageIds[channelId] = messages[0].id;
-        console.log(`頻道 ${channelId} 初始化完成`);
-        needsSave = true;
+        const messages = await res.json();
+
+        if (messages.length) {
+          lastMessageIds[channelId] = messages[0].id;
+          console.log(`頻道 ${channelId} 初始化完成`);
+          needsSave = true;
+        }
       }
     }
+
+    if (needsSave) {
+      saveLastMessageId(lastMessageIds);
+      console.log("初始化完成，下次運行開始監聽新消息");
+      return;
+    }
+
+    const result = await checkDiscordChannel(lastMessageIds);
+
+    saveLastMessageId(result.newLastIds);
+
+    codes = result.codes;
   }
-
-  if (needsSave) {
-    saveLastMessageId(lastMessageIds);
-    console.log("初始化完成，下次運行開始監聽新消息");
-    return;
-  }
-
-  const { newLastIds, codes } = await checkDiscordChannel(lastMessageIds);
-
-  saveLastMessageId(newLastIds);
 
   if (!codes.length) {
     console.log("沒有新 code");
     return;
   }
 
-  console.log("發現新 code，從 Google Sheet 獲取已 Approved 的 UID...");
+  console.log("發現 code，從 Google Sheet 獲取已 Approved 的 UID...");
 
   const uids = await fetchApprovedUids();
 
