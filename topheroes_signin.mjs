@@ -185,37 +185,56 @@ async function loginOnce(uid) {
   };
 }
 
-async function login(uid) {
-  const first = await loginOnce(uid);
+async function login(uid, maxRetries = 3) {
+  let lastError;
 
-  if (first.token) {
-    return {
-      nickname: first.nickname,
-      authedHeaders: {
-        ...headers,
-        authorization: first.token
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const loginRes = await fetch(`${BASE}/api/v2/store/login/player`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          site_id: SITE_ID,
+          player_id: uid,
+          server_id: "",
+          device: "mobile"
+        })
+      });
+
+      const token = loginRes.headers.get("authorization");
+      const loginData = await loginRes.json();
+
+      if (loginData.code !== 1) {
+        throw new Error(`登錄失敗: ${loginData.message || JSON.stringify(loginData)}`);
       }
-    };
-  }
 
-  logWarn(`UID ${maskUid(uid)} 第一次登錄沒有拿到 token，2 秒後重試一次`);
-  await sleep(2000);
+      const nickname = loginData?.data?.user?.nickname || "(unknown)";
 
-  const second = await loginOnce(uid);
+      if (!token) {
+        throw new Error(`沒有拿到 token (${nickname})`);
+      }
 
-  if (!second.token) {
-    throw new Error("沒有拿到 token");
-  }
+      return {
+        nickname,
+        authedHeaders: {
+          ...headers,
+          authorization: token
+        }
+      };
 
-  return {
-    nickname: second.nickname || first.nickname,
-    authedHeaders: {
-      ...headers,
-      authorization: second.token
+    } catch (err) {
+      lastError = err;
+
+      if (attempt < maxRetries) {
+        const wait = 3000 + Math.floor(Math.random() * 5000);
+        console.warn(`login 失敗，${wait}ms 後重試 ${attempt}/${maxRetries}: ${err.message}`);
+        await sleep(wait);
+      }
     }
-  };
-}
+  }
 
+  throw lastError;
+}
 async function getCurrentSignActivity(authedHeaders) {
   const data = await fetchJson(
     `${BASE}/api/v2/store/sale/biz/list?project_id=${PROJECT_ID}&status=2`,
