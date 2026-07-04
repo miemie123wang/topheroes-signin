@@ -208,14 +208,25 @@ async function login(uid, maxRetries = 3) {
         })
       });
 
-      const token = loginRes.headers.get("authorization");
-      const loginData = await loginRes.json();
+      const text = await loginRes.text();
+
+      if (!loginRes.ok) {
+        throw new Error(`HTTP ${loginRes.status}: ${text}`);
+      }
+
+      let loginData;
+      try {
+        loginData = JSON.parse(text);
+      } catch {
+        throw new Error(`返回不是 JSON：${text}`);
+      }
 
       if (loginData.code !== 1) {
-        throw new Error(`登錄失敗: ${loginData.message || JSON.stringify(loginData)}`);
+        throw new Error(loginData.message || JSON.stringify(loginData));
       }
 
       const nickname = loginData?.data?.user?.nickname || "(unknown)";
+      const token = loginRes.headers.get("authorization");
 
       if (!token) {
         throw new Error(`沒有拿到 token (${nickname})`);
@@ -233,16 +244,23 @@ async function login(uid, maxRetries = 3) {
       lastError = err;
 
       if (attempt < maxRetries) {
-        await preCheckPlayer(uid);
         const wait = 3000 + Math.floor(Math.random() * 5000);
-        console.warn(`login 失敗，${wait}ms 後重試 ${attempt}/${maxRetries}: ${err.message}`);
+
+        console.warn(
+          `[login ${attempt}/${maxRetries}] ${maskUid(uid)} 失敗：${err.message}`
+        );
+        console.warn(`等待 ${wait} ms 後重試...`);
+
         await sleep(wait);
       }
     }
   }
 
-  throw lastError;
+  throw new Error(
+    `登入失敗（已重試 ${maxRetries} 次）：${lastError.message}`
+  );
 }
+
 async function getCurrentSignActivity(authedHeaders) {
   const data = await fetchJson(
     `${BASE}/api/v2/store/sale/biz/list?project_id=${PROJECT_ID}&status=2`,
